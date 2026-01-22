@@ -14,6 +14,8 @@
 
 ## BOM
 
+See [Bill of Materials](docs/BOM.md) for complete parts list.
+
 ## Build steps
 
 ## Wiring
