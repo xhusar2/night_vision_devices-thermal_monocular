@@ -36,34 +36,37 @@ int main(void) {
     int state_length = snprintf(state_json, sizeof(state_json), CONTROL_STATE_JSON_FORMAT,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
-        UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, "0.4.2",
-        UINT_MAX, INT_MIN, UINT_MAX, UINT_MAX, INT_MIN, UINT_MAX, INT_MIN);
+        UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, "0.4.3",
+        UINT_MAX, INT_MIN);
     assert(state_length > 0);
     assert((size_t)state_length < sizeof(state_json));
 
     char *main_source = read_text("main/main.c");
-    const char *server_setup = strstr(main_source, "httpd_start(&server, &config)");
-    const char *recovery_start = strstr(main_source, "xTaskCreate(boot_analog_video_task");
-    assert(server_setup != NULL && recovery_start != NULL && recovery_start > server_setup);
-    const char *task = strstr(main_source, "static void boot_analog_video_task");
-    assert(task != NULL);
-    const char *task_end = strstr(task, "static void wifi_event_handler");
-    assert(task_end != NULL);
-    const char *delay_five = strstr(task, "vTaskDelay(pdMS_TO_TICKS(5000))");
-    const char *send_opposite = strstr(task, "Mini2_set_analog_video_format(&cam, opposite_format)");
-    const char *delay_one = strstr(task, "vTaskDelay(pdMS_TO_TICKS(1000))");
-    const char *restore = strstr(task, "Mini2_set_analog_video_format(&cam, boot_analog_video_format)");
-    assert(delay_five != NULL && send_opposite != NULL && delay_one != NULL && restore != NULL);
-    assert(delay_five < send_opposite && send_opposite < delay_one);
-    assert(delay_one < restore && restore < task_end);
-    assert(strstr(task, "Mini2_NUC") == NULL || strstr(task, "Mini2_NUC") > task_end);
-    assert(strstr(task, "Mini2_Background_Correction") == NULL || strstr(task, "Mini2_Background_Correction") > task_end);
+    assert(strstr(main_source, "boot_analog_video_task") == NULL);
+    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.3\"") != NULL);
     assert(strstr(main_source, "apply_preset_with_crosshair(stored.active_preset)") != NULL);
     free(main_source);
 
     char *html = read_text("main/index.html");
-    assert(strstr(html, "unavailable at true 1.0×") != NULL);
+    assert(strstr(html, "including at true 1.0×") != NULL);
     assert(strstr(html, "zoom_x_minus") != NULL && strstr(html, "zoom_y_plus") != NULL);
+    assert(strstr(html, "zoom_x.min = 0") != NULL);
+    assert(strstr(html, "zoom_x.max = sensor_width - 1") != NULL);
+    assert(strstr(html, "zoom_y.min = 0") != NULL);
+    assert(strstr(html, "zoom_y.max = sensor_height - 1") != NULL);
+    assert(strstr(html, "zoom_x.disabled") == NULL);
+    assert(strstr(html, "x: zoom_x") != NULL && strstr(html, "y: zoom_y") != NULL);
+    assert(strstr(html, "zoom: zoom") != NULL);
     free(html);
+
+    char *mini2 = read_text("components/Mini2/Mini2.c");
+    const char *apply = strstr(mini2, "esp_err_t Mini2_apply_preset");
+    assert(apply != NULL);
+    const char *digital = strstr(apply, "Mini2_set_digital_video_format(cam, true, UsbProgressive, Hz50)");
+    const char *analog = strstr(apply, "Mini2_set_analog_video_format(cam, alignment->av_format)");
+    const char *nuc = strstr(apply, "Mini2_NUC(cam)");
+    assert(digital != NULL && analog != NULL && nuc != NULL && digital < analog && analog < nuc);
+    assert(strstr(apply, "format_read_err == ESP_OK && format != alignment->av_format") != NULL);
+    free(mini2);
     return 0;
 }

@@ -261,52 +261,53 @@ esp_err_t Mini2_Background_Correction(Mini2_t* cam) {
 }
 
 esp_err_t Mini2_apply_preset(Mini2_t* cam, value_preset_t* preset, alignment_preset_t* alignment, bool seem_less) {
-    esp_err_t err;
-    esp_err_t analog_video_err = ESP_OK;
-    bool format_matches = false;
+    esp_err_t err = ESP_OK;
+    esp_err_t format_read_err = ESP_ERR_INVALID_STATE;
+    enum AnalogVideoFormat format = alignment->av_format;
+
+#define RECORD_COMMAND(command) do { \
+    esp_err_t command_err = (command); \
+    if (err == ESP_OK && command_err != ESP_OK) err = command_err; \
+} while (0)
     
     if (!seem_less) {
-        enum AnalogVideoFormat format;
-        err = Mini2_get_analog_video_format(cam, &format);
-        format_matches = err == ESP_OK && format == alignment->av_format;
-        if (format_matches) {
-            ESP_LOGI(Mini2_TAG, "Format already matches.");
-        } else {
-            ESP_LOGE(Mini2_TAG, "Failed to read av format, or found missmatch");
-            Mini2_set_digital_video_format(cam, true, UsbProgressive, Hz50);
-        }
+        format_read_err = Mini2_get_analog_video_format(cam, &format);
+        RECORD_COMMAND(Mini2_set_digital_video_format(cam, true, UsbProgressive, Hz50));
     }
 
-    Mini2_set_scene_mode(cam, preset->scene_mode);
+    RECORD_COMMAND(Mini2_set_scene_mode(cam, preset->scene_mode));
     // Mini2_set_brightness(cam, preset->brightness); // Brightness is handeld seperatly for THERMAL_MONOCULAR
-    Mini2_set_contrast(cam, preset->contrast);
-    Mini2_set_edge_enhancment(cam, preset->edge_enhancment_gear);
-    Mini2_set_detail_enhancement(cam, preset->detail_enhancement_gear);
-    Mini2_set_burn_protection(cam, true);
-    Mini2_set_auto_shutter(cam, true);
-    Mini2_set_color_pallet(cam, WHOT);
+    RECORD_COMMAND(Mini2_set_contrast(cam, preset->contrast));
+    RECORD_COMMAND(Mini2_set_edge_enhancment(cam, preset->edge_enhancment_gear));
+    RECORD_COMMAND(Mini2_set_detail_enhancement(cam, preset->detail_enhancement_gear));
+    RECORD_COMMAND(Mini2_set_burn_protection(cam, true));
+    RECORD_COMMAND(Mini2_set_auto_shutter(cam, true));
+    RECORD_COMMAND(Mini2_set_color_pallet(cam, WHOT));
 
     if (!seem_less) {
-        Mini2_set_detector_fps(cam, alignment->fps);
+        RECORD_COMMAND(Mini2_set_detector_fps(cam, alignment->fps));
     }
 
     for (int i=0; i<3; i++) { // Newer Cam modules seem to have an issue with getting the command, but not applying it, resending insures that is does.
         if (alignment->flip_mode == No_Flip) {
-            Mini2_set_flip_mode(cam, No_Flip);
-            Mini2_set_point_zoom(cam, alignment->zoom_x, alignment->zoom_y, alignment->zoom);
+            RECORD_COMMAND(Mini2_set_flip_mode(cam, No_Flip));
+            RECORD_COMMAND(Mini2_set_point_zoom(cam, alignment->zoom_x, alignment->zoom_y, alignment->zoom));
         } else {
-            Mini2_set_centre_zoom(cam, 10);
-            Mini2_set_flip_mode(cam, alignment->flip_mode);
+            RECORD_COMMAND(Mini2_set_centre_zoom(cam, 10));
+            RECORD_COMMAND(Mini2_set_flip_mode(cam, alignment->flip_mode));
         }
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 
     if (!seem_less) {
-        analog_video_err = Mini2_set_analog_video_format(cam, alignment->av_format);
-        if (!format_matches) {
-            Mini2_save_video(cam);
+        esp_err_t analog_video_err = Mini2_set_analog_video_format(cam, alignment->av_format);
+        if (err == ESP_OK && analog_video_err != ESP_OK) err = analog_video_err;
+        if (format_read_err == ESP_OK && format != alignment->av_format && analog_video_err == ESP_OK) {
+            RECORD_COMMAND(Mini2_save_video(cam));
         }
+        RECORD_COMMAND(Mini2_NUC(cam));
     }
 
-    return analog_video_err;
+    #undef RECORD_COMMAND
+    return err;
 }

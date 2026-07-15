@@ -417,7 +417,7 @@
             <span class="slider"></span>
           </label>
         </div>
-        <p class="hint">The native crosshair has no position command. X/Y shifts the zoomed thermal image beneath it and is unavailable at true 1.0× because there is no crop room.</p>
+        <p class="hint">The native crosshair has no position command. X/Y shifts the thermal image beneath the fixed native overlay, including at true 1.0×.</p>
       </div>
       <div>
         <label for="wifi_next_boot">Wi-Fi on next boot</label>
@@ -461,7 +461,6 @@
     let sensor_width = 256;
     let sensor_height = 192;
     const diagnosticEntries = [];
-    let aimUnavailableLogged = false;
 
     function logDiagnostic(message) {
       diagnosticEntries.push(`${new Date().toLocaleTimeString()} ${message}`);
@@ -494,24 +493,12 @@
       const zoom_x = document.getElementById("zoom_x");
       const zoom_y = document.getElementById("zoom_y");
 
-      const x_room = Math.ceil((sensor_width - (sensor_width / (parseInt(zoom.value, 10) / 10))) / 2);
-      const y_room = Math.ceil((sensor_height - (sensor_height / (parseInt(zoom.value, 10) / 10))) / 2);
-      zoom_x.min = (sensor_width / 2) - x_room;
-      zoom_x.max = (sensor_width / 2) + x_room;
-      zoom_y.min = (sensor_height / 2) - y_room;
-      zoom_y.max = (sensor_height / 2) + y_room;
+      zoom_x.min = 0;
+      zoom_x.max = sensor_width - 1;
+      zoom_y.min = 0;
+      zoom_y.max = sensor_height - 1;
       zoom_x.value = Math.min(Number(zoom_x.max), Math.max(Number(zoom_x.min), Number(zoom_x.value)));
       zoom_y.value = Math.min(Number(zoom_y.max), Math.max(Number(zoom_y.min), Number(zoom_y.value)));
-      const aimEnabled = parseInt(zoom.value, 10) > 10;
-      zoom_x.disabled = !aimEnabled;
-      zoom_y.disabled = !aimEnabled;
-      ["zoom_x_minus", "zoom_x_plus", "zoom_y_minus", "zoom_y_plus"].forEach(id => {
-        document.getElementById(id).disabled = !aimEnabled;
-      });
-      if (!aimEnabled && !aimUnavailableLogged) {
-        logDiagnostic("AIM X/Y unavailable at true 1.0x: fixed native crosshair and no point-zoom crop room");
-      }
-      aimUnavailableLogged = !aimEnabled;
       showRangeValue(zoom);
       showRangeValue(zoom_x);
       showRangeValue(zoom_y);
@@ -589,12 +576,6 @@
         document.getElementById("firmware_version").textContent = data.firmware_version || "unknown";
         if (Object.prototype.hasOwnProperty.call(data, "boot_analog_video_initial_ok")) {
           logDiagnostic(`BOOT analog initial ${data.boot_analog_video_initial_ok ? "ok" : `failed (${data.boot_analog_video_initial_status})`}`);
-          if (data.boot_analog_video_pending) {
-            logDiagnostic("BOOT analog recovery pending");
-          } else {
-            logDiagnostic(`BOOT analog opposite ${data.boot_analog_video_opposite_ok ? "ok" : `failed (${data.boot_analog_video_opposite_status})`}`);
-            logDiagnostic(`BOOT analog restore ${data.boot_analog_video_restore_ok ? "ok" : `failed (${data.boot_analog_video_restore_status})`}`);
-          }
         }
         for (const key in data) {
           if (key === "firmware_version" || key.startsWith("boot_analog_video_")) {
