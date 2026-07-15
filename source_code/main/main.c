@@ -22,7 +22,7 @@
 #define SSID "THERMAL_MONOCULAR"
 #define PASSWORD "password123"
 #define PRESET_COUNT 3
-#define FIRMWARE_VERSION "0.3.0"
+#define FIRMWARE_VERSION "0.4.0"
 
 #define UART_TX GPIO_NUM_1
 #define UART_RX GPIO_NUM_2
@@ -96,7 +96,20 @@ stored_values_t stored = {
 };
 
 static bool crosshair_enabled = false;
-static esp_err_t boot_analog_video_status = ESP_ERR_INVALID_STATE;
+static bool wifi_next_boot = false;
+static esp_err_t boot_analog_video_initial_status = ESP_ERR_INVALID_STATE;
+static esp_err_t boot_analog_video_delayed_status = ESP_ERR_INVALID_STATE;
+
+static esp_err_t commit_settings(void) {
+    esp_err_t err = nvs_set_blob(flash_handle, "stored_values", &stored, sizeof(stored));
+    if (err == ESP_OK) {
+        err = nvs_set_u8(flash_handle, "crosshair_en", crosshair_enabled);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(flash_handle, "wifi_next", wifi_next_boot);
+    }
+    return err == ESP_OK ? nvs_commit(flash_handle) : err;
+}
 
 static bool json_obj_has_key(const jparse_ctx_t *jctx, const char *key) {
     const int object_index = jctx->cur - jctx->tokens;
@@ -191,7 +204,7 @@ static void loop_task(void *pvParameters) {
         if (stored.active_preset != last_seen_preset) {
             Mini2_apply_preset(&cam, &stored.presets[stored.active_preset], &stored.alignment, true);
             last_seen_preset = stored.active_preset;
-            esp_err_t err = nvs_set_blob(flash_handle, "stored_values", &stored, sizeof(stored_values_t));
+            esp_err_t err = commit_settings();
             if (err == ESP_OK) {
                 ESP_LOGI(TAG, "Stored values in NVS");
             } else {
@@ -358,6 +371,11 @@ static esp_err_t post_handler(httpd_req_t *req) {
         crosshair_enabled = bool_val;
     }
 
+    ret = json_obj_get_bool(&jctx, "wifi_next_boot", &bool_val);
+    if (ret == OS_SUCCESS) {
+        wifi_next_boot = bool_val;
+    }
+
     ret = json_obj_get_int(&jctx, "active_profile", &value);
     if (ret == OS_SUCCESS) {
         if ((0 <= value) && (value < PRESET_COUNT)) {
@@ -392,7 +410,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
         stored.first_boot = false;
     }
 
-    esp_err_t err = nvs_set_blob(flash_handle, "stored_values", &stored, sizeof(stored_values_t));
+    esp_err_t err = commit_settings();
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "Stored values in NVS");
     } else {
@@ -422,9 +440,12 @@ static esp_err_t retireve_values(httpd_req_t *req) {
     \"sensor_height\": %u, \
     \"refresh_flip_mode\": %u, \
     \"crosshair_enabled\": %u, \
+    \"wifi_next_boot\": %u, \
     \"firmware_version\": \"%s\", \
-    \"boot_analog_video_ok\": %u, \
-    \"boot_analog_video_status\": %d \
+    \"boot_analog_video_initial_ok\": %u, \
+    \"boot_analog_video_initial_status\": %d, \
+    \"boot_analog_video_delayed_ok\": %u, \
+    \"boot_analog_video_delayed_status\": %d \
     }";
 
     char out_json[640];
@@ -449,9 +470,12 @@ static esp_err_t retireve_values(httpd_req_t *req) {
         cam.variant.sensor_height,
         stored.alignment.refresh_flip_mode,
         (uint8_t)crosshair_enabled,
+        (uint8_t)wifi_next_boot,
         FIRMWARE_VERSION,
-        boot_analog_video_status == ESP_OK,
-        boot_analog_video_status
+        boot_analog_video_initial_status == ESP_OK,
+        boot_analog_video_initial_status,
+        boot_analog_video_delayed_status == ESP_OK,
+        boot_analog_video_delayed_status
     );
 
     if (res <= 0 || (size_t)res >= sizeof(out_json)) {
@@ -493,6 +517,26 @@ httpd_uri_t index_uri = {
 void app_main(void) {
     ESP_ERROR_CHECK(nvs_flash_init());
 
+    for (int i=0; i<PRESET_COUNT; i++) {
+        stored.presets[i] = i < (sizeof(default_presets) / sizeof(value_preset_t))
+            ? default_presets[i] : base_preset;
+    }
+
+    ESP_ERROR_CHECK(nvs_open("storage", NVS_READWRITE, &flash_handle));
+    size_t len = sizeof(stored_values_t);
+    esp_err_t err = nvs_get_blob(flash_handle, "stored_values", &stored, &len);
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "Failed to read stored values from NVS, going with defaults.");
+    }
+    uint8_t persisted_value = 0;
+    if (nvs_get_u8(flash_handle, "crosshair_en", &persisted_value) == ESP_OK) {
+        crosshair_enabled = persisted_value != 0;
+    }
+    persisted_value = 0;
+    if (nvs_get_u8(flash_handle, "wifi_next", &persisted_value) == ESP_OK) {
+        wifi_next_boot = persisted_value != 0;
+    }
+
     gpio_config_t io_conf = {
         .intr_type = GPIO_INTR_NEGEDGE,
         .mode = GPIO_MODE_INPUT,
@@ -502,7 +546,11 @@ void app_main(void) {
     };
     gpio_config(&io_conf);
 
-    bool wifi_en = (gpio_get_level(MULTI_BTN) == 0) || (stored.first_boot);
+    bool wifi_en = (gpio_get_level(MULTI_BTN) == 0) || stored.first_boot || wifi_next_boot;
+    if (wifi_next_boot) {
+        wifi_next_boot = false;
+        ESP_ERROR_CHECK(commit_settings());
+    }
     ESP_LOGI(TAG, "Wifi: %d", (int)wifi_en);
 
     if (wifi_en) {
@@ -536,28 +584,17 @@ void app_main(void) {
 
     vTaskDelay(pdMS_TO_TICKS(5000));
 
-    for (int i=0; i<PRESET_COUNT; i++) {
-        if (i < (sizeof(default_presets) / sizeof(value_preset_t))) {
-            stored.presets[i] = default_presets[i];
-        } else {
-            stored.presets[i] = base_preset;
-        }
-    }
-    
     Mini2_init(&cam);
 
-    ESP_ERROR_CHECK(nvs_open("storage", NVS_READWRITE, &flash_handle));
-    size_t len = sizeof(stored_values_t);
-    esp_err_t err = nvs_get_blob(flash_handle, "stored_values", &stored, &len);
-    if (err != ESP_OK) {
-        ESP_LOGI(TAG, "Failed to read stores from NVS, going with defaults.");
-    }
-    boot_analog_video_status = Mini2_apply_preset(&cam, &stored.presets[stored.active_preset], &stored.alignment, false);
-    if (boot_analog_video_status == ESP_OK) {
+    boot_analog_video_initial_status = Mini2_apply_preset(&cam, &stored.presets[stored.active_preset], &stored.alignment, false);
+    if (boot_analog_video_initial_status == ESP_OK) {
         ESP_LOGI(TAG, "Boot analog video initialization succeeded");
     } else {
-        ESP_LOGE(TAG, "Boot analog video initialization failed: %s", esp_err_to_name(boot_analog_video_status));
+        ESP_LOGE(TAG, "Boot analog video initialization failed: %s", esp_err_to_name(boot_analog_video_initial_status));
     }
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    boot_analog_video_delayed_status = Mini2_set_analog_video_format(&cam, stored.alignment.av_format);
+    ESP_LOGI(TAG, "Delayed analog video activation: %s", esp_err_to_name(boot_analog_video_delayed_status));
 
     xTaskCreate(loop_task, "loop task", 16384, NULL, 5, NULL);
 

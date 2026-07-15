@@ -66,6 +66,20 @@
       width: min(220px, 52vw);
     }
 
+    .aim-control:not(#zoom_div) .range-control {
+      grid-template-columns: auto 1fr auto 3rem;
+      width: min(300px, 68vw);
+    }
+
+    .step-button {
+      min-width: 2.25rem;
+      min-height: 2.25rem;
+      color: var(--text_color);
+      background: var(--bg_input);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+
     output {
       color: var(--accent_cool);
       font-variant-numeric: tabular-nums;
@@ -405,6 +419,11 @@
         </div>
         <p class="hint">Aim adjustment shifts the thermal image beneath the camera's fixed crosshair. Increase zoom to create adjustment room.</p>
       </div>
+      <div>
+        <label for="wifi_next_boot">Wi-Fi on next boot</label>
+        <div><label class="switch"><input id="wifi_next_boot" onchange="updateValue(this.id, this.checked ? 1 : 0)" type="checkbox"><span class="slider"></span></label></div>
+        <p class="hint">One shot: this flag is cleared when the next boot enables Wi-Fi.</p>
+      </div>
       <div id="zoom_div" class="aim-control">
         <label for="zoom">Zoom</label>
         <div class="range-control">
@@ -415,14 +434,18 @@
       <div class="aim-control">
         <label for="zoom_x">Horizontal</label>
         <div class="range-control">
+          <button class="step-button" id="zoom_x_minus" type="button" aria-label="Decrease horizontal aim" onclick="adjustAim('zoom_x', -1)">−</button>
           <input class="zoom_slider" type="range" id="zoom_x" min="0" max="255" value="128" oninput="showRangeValue(this)" onchange="updateZoom()">
+          <button class="step-button" id="zoom_x_plus" type="button" aria-label="Increase horizontal aim" onclick="adjustAim('zoom_x', 1)">+</button>
           <output id="zoom_x_value">128</output>
         </div>
       </div>
       <div class="aim-control">
         <label for="zoom_y">Vertical</label>
         <div class="range-control">
+          <button class="step-button" id="zoom_y_minus" type="button" aria-label="Decrease vertical aim" onclick="adjustAim('zoom_y', -1)">−</button>
           <input class="zoom_slider" type="range" id="zoom_y" min="0" max="191" value="96" oninput="showRangeValue(this)" onchange="updateZoom()">
+          <button class="step-button" id="zoom_y_plus" type="button" aria-label="Increase vertical aim" onclick="adjustAim('zoom_y', 1)">+</button>
           <output id="zoom_y_value">96</output>
         </div>
       </div>
@@ -481,9 +504,19 @@
       const aimEnabled = parseInt(zoom.value, 10) > 10;
       zoom_x.disabled = !aimEnabled;
       zoom_y.disabled = !aimEnabled;
+      ["zoom_x_minus", "zoom_x_plus", "zoom_y_minus", "zoom_y_plus"].forEach(id => {
+        document.getElementById(id).disabled = !aimEnabled;
+      });
       showRangeValue(zoom);
       showRangeValue(zoom_x);
       showRangeValue(zoom_y);
+    }
+
+    function adjustAim(id, delta) {
+      const input = document.getElementById(id);
+      input.value = Math.min(Number(input.max), Math.max(Number(input.min), Number(input.value) + delta));
+      showRangeValue(input);
+      updateZoom();
     }
 
     function updateZoom() {
@@ -549,13 +582,12 @@
       .then(data => {
         console.log("Syncing data:", data);
         document.getElementById("firmware_version").textContent = data.firmware_version || "unknown";
-        if (Object.prototype.hasOwnProperty.call(data, "boot_analog_video_ok")) {
-          logDiagnostic(data.boot_analog_video_ok
-            ? "BOOT analog video initialized"
-            : `BOOT analog video failed (${data.boot_analog_video_status})`);
+        if (Object.prototype.hasOwnProperty.call(data, "boot_analog_video_initial_ok")) {
+          logDiagnostic(`BOOT analog initial ${data.boot_analog_video_initial_ok ? "ok" : `failed (${data.boot_analog_video_initial_status})`}`);
+          logDiagnostic(`BOOT analog delayed ${data.boot_analog_video_delayed_ok ? "ok" : `failed (${data.boot_analog_video_delayed_status})`}`);
         }
         for (const key in data) {
-          if (key === "firmware_version" || key === "boot_analog_video_ok" || key === "boot_analog_video_status") {
+          if (key === "firmware_version" || key.startsWith("boot_analog_video_")) {
             continue;
           } else if (key === "sensor_width") {
             sensor_width = data[key];
@@ -567,7 +599,7 @@
             document.getElementById("zoom_y").value = data[key];
           } else if (key === "zoom") {
             document.getElementById("zoom").value = data[key];
-          } else if (key === "auto_shutter_en" || key === "burn_protection_en" || key === "preset_en" || key === "refresh_flip_mode" || key === "crosshair_enabled") {
+          } else if (key === "auto_shutter_en" || key === "burn_protection_en" || key === "preset_en" || key === "refresh_flip_mode" || key === "crosshair_enabled" || key === "wifi_next_boot") {
             const checkbox = document.getElementById(key);
             if (checkbox !== null) {
               checkbox.checked = data[key];
