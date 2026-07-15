@@ -14,6 +14,7 @@
 #include "esp_timer.h"
 #include "driver/gpio.h"
 #include "Mini2.h"
+#include "control_validation.h"
 
 #define TAG "MAIN"
 
@@ -91,6 +92,8 @@ stored_values_t stored = {
     },
     .first_boot = true
 };
+
+static bool crosshair_enabled = false;
 
 Mini2_t cam = {
     .uart_port = UART_NUM_1, // C3 only has num0 and num1, and num0 is used for debug / USB_CDC
@@ -289,12 +292,25 @@ static esp_err_t post_handler(httpd_req_t *req) {
     if (ret == OS_SUCCESS) {
         int x, y, zoom;
         if (json_obj_get_int(&jctx, "x", &x) == OS_SUCCESS && json_obj_get_int(&jctx, "y", &y) == OS_SUCCESS && json_obj_get_int(&jctx, "zoom", &zoom) == OS_SUCCESS) {
-            Mini2_set_point_zoom(&cam, (uint16_t)x, (uint16_t)y, (uint8_t)zoom);
-            stored.alignment.zoom = zoom;
-            stored.alignment.zoom_x = x;
-            stored.alignment.zoom_y = y;
+            if (!control_point_zoom_is_valid(x, y, zoom, cam.variant.sensor_width, cam.variant.sensor_height)) {
+                json_obj_leave_object(&jctx);
+                json_parse_end(&jctx);
+                free(buf);
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid zoom coordinates");
+                return ESP_OK;
+            }
+            if (Mini2_set_point_zoom(&cam, (uint16_t)x, (uint16_t)y, (uint8_t)zoom) == ESP_OK) {
+                stored.alignment.zoom = zoom;
+                stored.alignment.zoom_x = x;
+                stored.alignment.zoom_y = y;
+            }
         }
         json_obj_leave_object(&jctx);
+    }
+
+    ret = json_obj_get_bool(&jctx, "crosshair_enabled", &bool_val);
+    if (ret == OS_SUCCESS && Mini2_set_crosshair(&cam, bool_val) == ESP_OK) {
+        crosshair_enabled = bool_val;
     }
 
     ret = json_obj_get_int(&jctx, "active_profile", &value);
@@ -359,7 +375,8 @@ static esp_err_t retireve_values(httpd_req_t *req) {
     \"av_format\": %u, \
     \"sensor_width\": %u, \
     \"sensor_height\": %u, \
-    \"refresh_flip_mode\": %u \
+    \"refresh_flip_mode\": %u, \
+    \"crosshair_enabled\": %u \
     }";
 
     char out_json[512];
@@ -382,7 +399,8 @@ static esp_err_t retireve_values(httpd_req_t *req) {
         stored.alignment.av_format,
         cam.variant.sensor_width,
         cam.variant.sensor_height,
-        stored.alignment.refresh_flip_mode
+        stored.alignment.refresh_flip_mode,
+        (uint8_t)crosshair_enabled
     );
 
     if (res <= 0) {
@@ -484,6 +502,8 @@ void app_main(void) {
         ESP_LOGI(TAG, "Failed to read stores from NVS, going with defaults.");
     }
     Mini2_apply_preset(&cam, &stored.presets[stored.active_preset], &stored.alignment, false);
+
+    Mini2_set_crosshair(&cam, crosshair_enabled);
 
     xTaskCreate(loop_task, "loop task", 16384, NULL, 5, NULL);
 

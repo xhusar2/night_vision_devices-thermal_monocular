@@ -206,12 +206,12 @@ esp_err_t Mini2_set_point_zoom(Mini2_t* cam, uint16_t x, uint16_t y, uint8_t zoo
         ESP_LOGE(Mini2_TAG, "Zoom must be between 10 and 80 for 1x to 8x");
         return ESP_FAIL;
     }
-    if (x > cam->variant.sensor_width) {
-        ESP_LOGE(Mini2_TAG, "X must be between 0 and sensor width");
+    if (x >= cam->variant.sensor_width) {
+        ESP_LOGE(Mini2_TAG, "X must be less than sensor width");
         return ESP_FAIL;
     }
-    if (y > cam->variant.sensor_height) {
-        ESP_LOGE(Mini2_TAG, "Y must be between 0 and sensor height");
+    if (y >= cam->variant.sensor_height) {
+        ESP_LOGE(Mini2_TAG, "Y must be less than sensor height");
         return ESP_FAIL;
     }
 
