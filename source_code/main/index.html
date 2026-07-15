@@ -429,6 +429,7 @@
 
     function showRangeValue(input) {
       const output = document.getElementById(`${input.id}_value`);
+      if (output === null) return;
       output.textContent = input.id === "zoom"
         ? `${(parseInt(input.value, 10) / 10).toFixed(1)}×`
         : input.value;
