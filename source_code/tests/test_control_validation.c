@@ -36,14 +36,14 @@ int main(void) {
     int state_length = snprintf(state_json, sizeof(state_json), CONTROL_STATE_JSON_FORMAT,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
-        UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, "0.4.6",
+        UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, "0.4.7",
         UINT_MAX, INT_MIN);
     assert(state_length > 0);
     assert((size_t)state_length < sizeof(state_json));
 
     char *main_source = read_text("main/main.c");
     assert(strstr(main_source, "boot_analog_video_task") == NULL);
-    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.6\"") != NULL);
+    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.7\"") != NULL);
     assert(strstr(main_source, "value < NTSC || value > PAL") != NULL);
     assert(strstr(main_source, "stored.alignment.av_format = (enum AnalogVideoFormat)value") != NULL);
     assert(strstr(main_source, "Unable to set analog video format") != NULL);
@@ -55,10 +55,21 @@ int main(void) {
     const char *cold_boot = strstr(uart_init, "Mini2_apply_preset");
     assert(cold_boot != NULL);
     assert(strstr(main_source, "apply_preset_with_crosshair(stored.active_preset)") != NULL);
+    assert(strstr(main_source, "#define BUTTON_LONG_PRESS_US (2 * 1000 * 1000)") != NULL);
+    assert(strstr(main_source, ".intr_type = GPIO_INTR_ANYEDGE") != NULL);
+    assert(strstr(main_source, "button_edge_pending = true") != NULL);
+    assert(strstr(main_source, "else if (!long_press_handled)") != NULL);
+    assert(strstr(main_source, "now - button_pressed_at >= BUTTON_LONG_PRESS_US") != NULL);
+    assert(strstr(main_source, "long_press_handled = true") != NULL);
+    assert(strstr(main_source, "set_preset_crosshair_enabled(stored.active_preset, enabled)") != NULL);
+    assert(strstr(main_source, "Mini2_set_crosshair(&cam, preset_crosshair_enabled(preset))") != NULL);
+    assert(strstr(main_source, "nvs_set_u8(flash_handle, \"crosshair_mask\", crosshair_preset_mask)") != NULL);
+    assert(strstr(main_source, "Mini2_set_crosshair(&cam, preset_crosshair_enabled(stored.active_preset))") != NULL);
     free(main_source);
 
     char *html = read_text("main/index.html");
     assert(strstr(html, "aim zoom must be at least 1.1×") != NULL);
+    assert(strstr(html, "Hold the preset button for 2 seconds") != NULL);
     assert(strstr(html, "id=\"aim_zoom\" min=\"11\"") != NULL);
     assert(strstr(html, "zoom_x_minus") != NULL && strstr(html, "zoom_y_plus") != NULL);
     assert(strstr(html, "zoom_x.min = 0") != NULL);

@@ -22,14 +22,15 @@
 #define SSID "THERMAL_MONOCULAR"
 #define PASSWORD "password123"
 #define PRESET_COUNT 3
-#define FIRMWARE_VERSION "0.4.6"
+#define FIRMWARE_VERSION "0.4.7"
+#define BUTTON_DEBOUNCE_US (50 * 1000)
+#define BUTTON_LONG_PRESS_US (2 * 1000 * 1000)
 
 #define UART_TX GPIO_NUM_1
 #define UART_RX GPIO_NUM_2
 #define POTI_PIN GPIO_NUM_4
 #define MULTI_BTN GPIO_NUM_8
 
-volatile int64_t button_debouce;
 
 extern const uint8_t index_html_start[] asm("_binary_index_html_start");
 extern const uint8_t index_html_end[]   asm("_binary_index_html_end");
@@ -95,15 +96,28 @@ stored_values_t stored = {
     .first_boot = true
 };
 
-static bool crosshair_enabled = false;
+static uint8_t crosshair_preset_mask = 0;
 static bool wifi_next_boot = false;
 static esp_err_t boot_analog_video_initial_status = ESP_ERR_INVALID_STATE;
 static volatile uint8_t last_applied_preset;
+static volatile bool button_edge_pending = false;
+
+static bool preset_crosshair_enabled(uint8_t preset) {
+    return (crosshair_preset_mask & (1U << preset)) != 0;
+}
+
+static void set_preset_crosshair_enabled(uint8_t preset, bool enabled) {
+    if (enabled) {
+        crosshair_preset_mask |= (1U << preset);
+    } else {
+        crosshair_preset_mask &= ~(1U << preset);
+    }
+}
 
 static esp_err_t commit_settings(void) {
     esp_err_t err = nvs_set_blob(flash_handle, "stored_values", &stored, sizeof(stored));
     if (err == ESP_OK) {
-        err = nvs_set_u8(flash_handle, "crosshair_en", crosshair_enabled);
+        err = nvs_set_u8(flash_handle, "crosshair_mask", crosshair_preset_mask);
     }
     if (err == ESP_OK) {
         err = nvs_set_u8(flash_handle, "wifi_next", wifi_next_boot);
@@ -136,7 +150,7 @@ Mini2_t cam = {
 
 static void apply_preset_with_crosshair(uint8_t preset) {
     Mini2_apply_preset(&cam, &stored.presets[preset], &stored.alignment, true);
-    Mini2_set_crosshair(&cam, crosshair_enabled);
+    Mini2_set_crosshair(&cam, preset_crosshair_enabled(preset));
     last_applied_preset = preset;
 }
 
@@ -160,10 +174,7 @@ void next_preset() { // Preset0 is always seen as active, otherwise the esp32 co
 }
 
 void IRAM_ATTR button_isr_handler(void* arg) {
-    if (esp_timer_get_time() - button_debouce > 200000) { // 200ms debounce
-        button_debouce = esp_timer_get_time();
-        next_preset();
-    };
+    button_edge_pending = true;
 }
 
 static void loop_task(void *pvParameters) {
@@ -195,9 +206,46 @@ static void loop_task(void *pvParameters) {
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, channel, &config));
 
     int64_t last_flip_check = esp_timer_get_time();
+    int64_t button_pressed_at = 0;
+    int64_t button_changed_at = 0;
+    bool button_pressed = false;
+    bool long_press_handled = false;
     #define FLIP_CHECK_INTERVAL (5 * 1000 * 1000)
 
     while (true) {
+        const int64_t now = esp_timer_get_time();
+        const bool button_level_pressed = gpio_get_level(MULTI_BTN) == 0;
+        if (button_edge_pending && now - button_changed_at >= BUTTON_DEBOUNCE_US &&
+            button_level_pressed != button_pressed) {
+            button_edge_pending = false;
+            button_changed_at = now;
+            button_pressed = button_level_pressed;
+            if (button_pressed) {
+                button_pressed_at = now;
+                long_press_handled = false;
+            } else if (!long_press_handled) {
+                next_preset();
+            }
+        }
+        if (button_pressed && !long_press_handled &&
+            now - button_pressed_at >= BUTTON_LONG_PRESS_US) {
+            const bool enabled = !preset_crosshair_enabled(stored.active_preset);
+            if (Mini2_set_crosshair(&cam, enabled) == ESP_OK) {
+                set_preset_crosshair_enabled(stored.active_preset, enabled);
+                long_press_handled = true;
+                esp_err_t button_err = commit_settings();
+                if (button_err == ESP_OK) {
+                    ESP_LOGI(TAG, "Long press: preset %u crosshair %s",
+                             stored.active_preset, enabled ? "enabled" : "disabled");
+                } else {
+                    ESP_LOGE(TAG, "Unable to persist long-press crosshair state: %s",
+                             esp_err_to_name(button_err));
+                }
+            } else {
+                long_press_handled = true;
+                ESP_LOGE(TAG, "Long press: unable to set crosshair");
+            }
+        }
         adc_oneshot_read(adc_handle, channel, &adc_raw);
         if (abs(adc_raw - last_adc_val) >= 100) {
             last_adc_val = adc_raw;
@@ -382,7 +430,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Unable to set crosshair");
             return ESP_OK;
         }
-        crosshair_enabled = bool_val;
+        set_preset_crosshair_enabled(stored.active_preset, bool_val);
     }
 
     ret = json_obj_get_bool(&jctx, "wifi_next_boot", &bool_val);
@@ -455,7 +503,7 @@ static esp_err_t retireve_values(httpd_req_t *req) {
         cam.variant.sensor_width,
         cam.variant.sensor_height,
         stored.alignment.refresh_flip_mode,
-        (uint8_t)crosshair_enabled,
+        (uint8_t)preset_crosshair_enabled(stored.active_preset),
         (uint8_t)wifi_next_boot,
         FIRMWARE_VERSION,
         boot_analog_video_initial_status == ESP_OK,
@@ -515,8 +563,10 @@ void app_main(void) {
         ESP_LOGI(TAG, "Failed to read stored values from NVS, going with defaults.");
     }
     uint8_t persisted_value = 0;
-    if (nvs_get_u8(flash_handle, "crosshair_en", &persisted_value) == ESP_OK) {
-        crosshair_enabled = persisted_value != 0;
+    if (nvs_get_u8(flash_handle, "crosshair_mask", &persisted_value) == ESP_OK) {
+        crosshair_preset_mask = persisted_value & ((1U << PRESET_COUNT) - 1U);
+    } else if (nvs_get_u8(flash_handle, "crosshair_en", &persisted_value) == ESP_OK && persisted_value != 0) {
+        crosshair_preset_mask = (1U << PRESET_COUNT) - 1U;
     }
     persisted_value = 0;
     if (nvs_get_u8(flash_handle, "wifi_next", &persisted_value) == ESP_OK) {
@@ -524,7 +574,7 @@ void app_main(void) {
     }
 
     gpio_config_t io_conf = {
-        .intr_type = GPIO_INTR_NEGEDGE,
+        .intr_type = GPIO_INTR_ANYEDGE,
         .mode = GPIO_MODE_INPUT,
         .pin_bit_mask = (1ULL << MULTI_BTN),
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -574,6 +624,10 @@ void app_main(void) {
     ESP_LOGI(TAG, "Mini2 UART initialized at %lld ms", esp_timer_get_time() / 1000);
 
     boot_analog_video_initial_status = Mini2_apply_preset(&cam, &stored.presets[stored.active_preset], &stored.alignment, false);
+    esp_err_t boot_crosshair_status = Mini2_set_crosshair(&cam, preset_crosshair_enabled(stored.active_preset));
+    if (boot_analog_video_initial_status == ESP_OK && boot_crosshair_status != ESP_OK) {
+        boot_analog_video_initial_status = boot_crosshair_status;
+    }
     last_applied_preset = stored.active_preset;
     if (boot_analog_video_initial_status == ESP_OK) {
         ESP_LOGI(TAG, "Boot video save/apply initialization succeeded");
@@ -596,7 +650,6 @@ void app_main(void) {
         }
     }
 
-    button_debouce = esp_timer_get_time();
     gpio_install_isr_service(0);
 
     gpio_isr_handler_add(MULTI_BTN, button_isr_handler, NULL);
