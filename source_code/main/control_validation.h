@@ -62,6 +62,10 @@ static inline bool control_flip_mode_is_valid(int value) {
     return value >= 0 && value <= 3;
 }
 
+static inline int control_first_error(int current_result, int next_result) {
+    return current_result == 0 ? next_result : current_result;
+}
+
 typedef enum {
     CONTROL_BUTTON_NONE,
     CONTROL_BUTTON_SHORT_PRESS,

@@ -87,6 +87,9 @@ int main(void) {
     assert(control_scene_mode_is_valid(5) && control_scene_mode_is_valid(9));
     assert(!control_scene_mode_is_valid(6));
     assert(control_flip_mode_is_valid(3) && !control_flip_mode_is_valid(4));
+    assert(control_first_error(0, 0) == 0);
+    assert(control_first_error(0, -3) == -3);
+    assert(control_first_error(-3, -4) == -3);
 
     control_button_state_t button;
     control_button_init(&button, false, 0);
@@ -178,6 +181,25 @@ int main(void) {
     assert(strstr(main_source, "set_preset_crosshair_enabled(stored.active_preset, enabled)") != NULL);
     assert(strstr(main_source, "control_apply_preset_transaction") != NULL);
     assert(strstr(main_source, "goto uart_failure") != NULL);
+    const char *restore = strstr(main_source, "static esp_err_t restore_camera_snapshot");
+    assert(restore != NULL);
+    const char *restore_palette = strstr(restore, "Mini2_set_color_pallet");
+    const char *restore_scene = strstr(restore, "Mini2_set_scene_mode");
+    const char *restore_contrast = strstr(restore, "Mini2_set_contrast");
+    const char *restore_edge = strstr(restore, "Mini2_set_edge_enhancment");
+    const char *restore_detail = strstr(restore, "Mini2_set_detail_enhancement");
+    const char *restore_burn = strstr(restore, "Mini2_set_burn_protection");
+    const char *restore_shutter = strstr(restore, "Mini2_set_auto_shutter");
+    const char *restore_analog = strstr(restore, "Mini2_set_analog_video_format");
+    const char *restore_flip = strstr(restore, "Mini2_set_flip_mode");
+    const char *restore_zoom = strstr(restore, "Mini2_set_point_zoom");
+    const char *restore_crosshair = strstr(restore, "Mini2_set_crosshair");
+    assert(restore_palette < restore_scene && restore_scene < restore_contrast &&
+           restore_contrast < restore_edge && restore_edge < restore_detail &&
+           restore_detail < restore_burn && restore_burn < restore_shutter &&
+           restore_shutter < restore_analog && restore_analog < restore_flip &&
+           restore_flip < restore_zoom && restore_zoom < restore_crosshair);
+    assert(strstr(restore_crosshair, "if (err == ESP_OK)") != NULL);
     assert(strstr(main_source, "nvs_set_u8(flash_handle, \"crosshair_mask\", crosshair_preset_mask)") != NULL);
     assert(strstr(main_source, "Mini2_set_crosshair(&cam, preset_crosshair_enabled(stored.active_preset))") != NULL);
     free(main_source);

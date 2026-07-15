@@ -179,6 +179,33 @@ static esp_err_t apply_preset_with_crosshair(uint8_t preset) {
     return ESP_OK;
 }
 
+static esp_err_t restore_camera_snapshot(const stored_values_t *snapshot,
+                                         uint8_t snapshot_crosshair_mask) {
+    const uint8_t preset_index = snapshot->active_preset;
+    const value_preset_t *preset = &snapshot->presets[preset_index];
+    esp_err_t err = ESP_OK;
+
+    err = control_first_error(err, Mini2_set_color_pallet(&cam, preset->pseudo_color));
+    err = control_first_error(err, Mini2_set_scene_mode(&cam, preset->scene_mode));
+    err = control_first_error(err, Mini2_set_contrast(&cam, preset->contrast));
+    err = control_first_error(err, Mini2_set_edge_enhancment(&cam, preset->edge_enhancment_gear));
+    err = control_first_error(err, Mini2_set_detail_enhancement(&cam, preset->detail_enhancement_gear));
+    err = control_first_error(err, Mini2_set_burn_protection(&cam, preset->burn_protection_en));
+    err = control_first_error(err, Mini2_set_auto_shutter(&cam, preset->auto_shutter_en));
+    err = control_first_error(err, Mini2_set_analog_video_format(&cam, snapshot->alignment.av_format));
+    err = control_first_error(err, Mini2_set_flip_mode(&cam, snapshot->alignment.flip_mode));
+    err = control_first_error(err, Mini2_set_point_zoom(
+        &cam, snapshot->alignment.zoom_x, snapshot->alignment.zoom_y,
+        snapshot->alignment.zoom));
+    err = control_first_error(err, Mini2_set_crosshair(
+        &cam, (snapshot_crosshair_mask & (1U << preset_index)) != 0));
+
+    if (err == ESP_OK) {
+        last_applied_preset = preset_index;
+    }
+    return err;
+}
+
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     if (event_id == WIFI_EVENT_AP_STACONNECTED) {
         wifi_event_ap_staconnected_t* event = (wifi_event_ap_staconnected_t*) event_data;
@@ -199,14 +226,15 @@ static uint8_t next_preset(uint8_t current) {
 }
 
 static esp_err_t switch_preset(uint8_t preset) {
-    const uint8_t previous = stored.active_preset;
+    const stored_values_t previous = stored;
+    const uint8_t previous_crosshair_mask = crosshair_preset_mask;
     esp_err_t err = apply_preset_with_crosshair(preset);
     if (err == ESP_OK) {
         stored.active_preset = preset;
         camera_state_authoritative = true;
         camera_state_status = ESP_OK;
     } else {
-        esp_err_t rollback_err = apply_preset_with_crosshair(previous);
+        esp_err_t rollback_err = restore_camera_snapshot(&previous, previous_crosshair_mask);
         camera_state_authoritative = rollback_err == ESP_OK;
         camera_state_status = rollback_err == ESP_OK ? err : rollback_err;
         ESP_LOGE(TAG, "Preset %u apply failed (%s), rollback %s", preset,
@@ -217,9 +245,11 @@ static esp_err_t switch_preset(uint8_t preset) {
 
 
 static esp_err_t rollback_preset(uint8_t preset) {
-    esp_err_t err = apply_preset_with_crosshair(preset);
+    stored_values_t snapshot = stored;
+    snapshot.active_preset = preset;
+    esp_err_t err = restore_camera_snapshot(&snapshot, crosshair_preset_mask);
     if (err == ESP_OK) {
-        stored.active_preset = preset;
+        stored = snapshot;
         err = commit_settings_with_retry();
     }
     camera_state_authoritative = err == ESP_OK;
@@ -566,7 +596,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
         stored = previous_stored;
         crosshair_preset_mask = previous_crosshair_mask;
         wifi_next_boot = previous_wifi_next_boot;
-        esp_err_t rollback_err = apply_preset_with_crosshair(stored.active_preset);
+        esp_err_t rollback_err = restore_camera_snapshot(&stored, crosshair_preset_mask);
         if (rollback_err == ESP_OK) {
             rollback_err = commit_settings_with_retry();
         }
@@ -585,7 +615,7 @@ uart_failure:
     crosshair_preset_mask = previous_crosshair_mask;
     wifi_next_boot = previous_wifi_next_boot;
     {
-        esp_err_t rollback_err = apply_preset_with_crosshair(stored.active_preset);
+        esp_err_t rollback_err = restore_camera_snapshot(&stored, crosshair_preset_mask);
         camera_state_authoritative = rollback_err == ESP_OK;
         camera_state_status = rollback_err == ESP_OK ? request_err : rollback_err;
         ESP_LOGE(TAG, "Web UART change failed (%s), rollback %s",
@@ -601,7 +631,7 @@ invalid_request:
     crosshair_preset_mask = previous_crosshair_mask;
     wifi_next_boot = previous_wifi_next_boot;
     {
-        esp_err_t rollback_err = apply_preset_with_crosshair(stored.active_preset);
+        esp_err_t rollback_err = restore_camera_snapshot(&stored, crosshair_preset_mask);
         camera_state_authoritative = rollback_err == ESP_OK;
         camera_state_status = rollback_err == ESP_OK ? request_err : rollback_err;
     }
