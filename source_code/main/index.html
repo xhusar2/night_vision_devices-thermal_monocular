@@ -461,6 +461,7 @@
     let sensor_width = 256;
     let sensor_height = 192;
     let cameraStateAuthoritative = true;
+    let persistenceAuthoritative = true;
     const diagnosticEntries = [];
 
     function logDiagnostic(message) {
@@ -476,7 +477,7 @@
     }
 
     function setSavedStatus() {
-      if (cameraStateAuthoritative) {
+      if (cameraStateAuthoritative && persistenceAuthoritative) {
         setStatus("Saved on device");
       } else {
         setStatus("Camera state is not synchronized; reapply a preset", true);
@@ -583,10 +584,16 @@
       .then(data => {
         console.log("Syncing data:", data);
         cameraStateAuthoritative = data.camera_state_authoritative !== 0;
+        persistenceAuthoritative = data.persistence_authoritative !== 0;
         if (!cameraStateAuthoritative) {
           setStatus(`Camera state is not synchronized (${data.camera_state_status})`, true);
           logDiagnostic(`ERROR camera state indeterminate (${data.camera_state_status})`);
+        } else if (!persistenceAuthoritative) {
+          setStatus(`Saved reboot state is not synchronized (${data.persistence_status})`, true);
+          logDiagnostic(`ERROR persistence indeterminate (${data.persistence_status})`);
         } else if (document.getElementById("status").textContent.startsWith("Camera state is not synchronized")) {
+          setStatus("");
+        } else if (document.getElementById("status").textContent.startsWith("Saved reboot state is not synchronized")) {
           setStatus("");
         }
         document.getElementById("firmware_version").textContent = data.firmware_version || "unknown";
@@ -594,7 +601,7 @@
           logDiagnostic(`BOOT video save/apply ${data.boot_analog_video_initial_ok ? "ok" : `failed (${data.boot_analog_video_initial_status})`}`);
         }
         for (const key in data) {
-          if (key === "firmware_version" || key.startsWith("boot_analog_video_") || key.startsWith("camera_state_")) {
+          if (key === "firmware_version" || key.startsWith("boot_analog_video_") || key.startsWith("camera_state_") || key.startsWith("persistence_")) {
             continue;
           } else if (key === "sensor_width") {
             sensor_width = data[key];

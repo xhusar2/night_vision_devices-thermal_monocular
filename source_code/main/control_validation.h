@@ -29,7 +29,9 @@
     "\"boot_analog_video_initial_ok\": %u, " \
     "\"boot_analog_video_initial_status\": %d, " \
     "\"camera_state_authoritative\": %u, " \
-    "\"camera_state_status\": %d " \
+    "\"camera_state_status\": %d, " \
+    "\"persistence_authoritative\": %u, " \
+    "\"persistence_status\": %d " \
     "}"
 
 static inline bool control_point_zoom_is_valid(int x, int y, int zoom,
@@ -68,6 +70,10 @@ static inline int control_first_error(int current_result, int next_result) {
 
 static inline bool control_rollback_required(bool device_mutated) {
     return device_mutated;
+}
+
+static inline bool control_commit_is_authoritative(int commit_result) {
+    return commit_result == 0;
 }
 
 typedef enum {

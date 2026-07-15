@@ -92,6 +92,8 @@ int main(void) {
     assert(control_first_error(-3, -4) == -3);
     assert(!control_rollback_required(false));
     assert(control_rollback_required(true));
+    assert(control_commit_is_authoritative(0));
+    assert(!control_commit_is_authoritative(-1));
 
     control_button_state_t button;
     control_button_init(&button, false, 0);
@@ -158,7 +160,7 @@ int main(void) {
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, "0.4.7",
-        UINT_MAX, INT_MIN, UINT_MAX, INT_MIN);
+        UINT_MAX, INT_MIN, UINT_MAX, INT_MIN, UINT_MAX, INT_MIN);
     assert(state_length > 0);
     assert((size_t)state_length < sizeof(state_json));
 
@@ -222,6 +224,8 @@ int main(void) {
     assert(strstr(html, "zoom: zoom") != NULL);
     assert(strstr(html, "Camera state is not synchronized") != NULL);
     assert(strstr(html, "cameraStateAuthoritative = data.camera_state_authoritative !== 0") != NULL);
+    assert(strstr(html, "persistenceAuthoritative = data.persistence_authoritative !== 0") != NULL);
+    assert(strstr(html, "Saved reboot state is not synchronized") != NULL);
     free(html);
 
     char *mini2 = read_text("components/Mini2/Mini2.c");

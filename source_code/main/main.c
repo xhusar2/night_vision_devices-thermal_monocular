@@ -103,6 +103,8 @@ static esp_err_t boot_analog_video_initial_status = ESP_ERR_INVALID_STATE;
 static volatile uint8_t last_applied_preset;
 static bool camera_state_authoritative = true;
 static esp_err_t camera_state_status = ESP_OK;
+static bool persistence_authoritative = true;
+static esp_err_t persistence_status = ESP_OK;
 
 static bool preset_crosshair_enabled(uint8_t preset) {
     return (crosshair_preset_mask & (1U << preset)) != 0;
@@ -250,7 +252,9 @@ static esp_err_t rollback_preset(uint8_t preset) {
     esp_err_t err = restore_camera_snapshot(&snapshot, crosshair_preset_mask);
     if (err == ESP_OK) {
         stored = snapshot;
-        err = commit_settings_with_retry();
+        esp_err_t commit_err = commit_settings_with_retry();
+        persistence_authoritative = control_commit_is_authoritative(commit_err);
+        persistence_status = commit_err;
     }
     camera_state_authoritative = err == ESP_OK;
     camera_state_status = err;
@@ -302,6 +306,8 @@ static void loop_task(void *pvParameters) {
             esp_err_t button_err = switch_preset(preset);
             if (button_err == ESP_OK) {
                 button_err = commit_settings_with_retry();
+                persistence_authoritative = control_commit_is_authoritative(button_err);
+                persistence_status = button_err;
                 if (button_err != ESP_OK) {
                     esp_err_t rollback_err = rollback_preset(previous);
                     if (rollback_err != ESP_OK) {
@@ -319,6 +325,8 @@ static void loop_task(void *pvParameters) {
             if (Mini2_set_crosshair(&cam, enabled) == ESP_OK) {
                 set_preset_crosshair_enabled(stored.active_preset, enabled);
                 esp_err_t button_err = commit_settings_with_retry();
+                persistence_authoritative = control_commit_is_authoritative(button_err);
+                persistence_status = button_err;
                 if (button_err == ESP_OK) {
                     ESP_LOGI(TAG, "Long press: preset %u crosshair %s",
                              stored.active_preset, enabled ? "enabled" : "disabled");
@@ -327,6 +335,8 @@ static void loop_task(void *pvParameters) {
                     set_preset_crosshair_enabled(stored.active_preset, !enabled);
                     if (rollback_err == ESP_OK) {
                         rollback_err = commit_settings_with_retry();
+                        persistence_authoritative = control_commit_is_authoritative(rollback_err);
+                        persistence_status = rollback_err;
                     }
                     if (rollback_err != ESP_OK) {
                         camera_state_authoritative = false;
@@ -604,6 +614,8 @@ static esp_err_t post_handler(httpd_req_t *req) {
 
     esp_err_t err = commit_settings_with_retry();
     if (err == ESP_OK) {
+        persistence_authoritative = true;
+        persistence_status = ESP_OK;
         ESP_LOGI(TAG, "Stored values in NVS");
     } else {
         stored = previous_stored;
@@ -616,6 +628,8 @@ static esp_err_t post_handler(httpd_req_t *req) {
             camera_state_status = rollback_err == ESP_OK ? err : rollback_err;
         }
         esp_err_t rollback_commit_err = commit_settings_with_retry();
+        persistence_authoritative = control_commit_is_authoritative(rollback_commit_err);
+        persistence_status = rollback_commit_err;
         ESP_LOGE(TAG, "Unable to persist web changes (%s), rollback %s",
                  esp_err_to_name(err),
                  rollback_err == ESP_OK && rollback_commit_err == ESP_OK ? "succeeded" : "failed");
@@ -684,7 +698,9 @@ static esp_err_t retireve_values(httpd_req_t *req) {
         boot_analog_video_initial_status == ESP_OK,
         boot_analog_video_initial_status,
         (uint8_t)camera_state_authoritative,
-        camera_state_status
+        camera_state_status,
+        (uint8_t)persistence_authoritative,
+        persistence_status
     );
 
     if (res <= 0 || (size_t)res >= sizeof(out_json)) {
