@@ -9,3 +9,5 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   from `source_code/`.
 - `main/index.html` is embedded into the firmware by `main/CMakeLists.txt`; keep
   its control IDs aligned with the `/get` and `/set` JSON keys in `main/main.c`.
+- Every firmware change must bump the semantic `FIRMWARE_VERSION` in
+  `source_code/main/main.c`; `/get` and the web-app footer expose it.

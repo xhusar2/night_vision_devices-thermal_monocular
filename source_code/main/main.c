@@ -22,6 +22,7 @@
 #define SSID "THERMAL_MONOCULAR"
 #define PASSWORD "password123"
 #define PRESET_COUNT 3
+#define FIRMWARE_VERSION "0.3.0"
 
 #define UART_TX GPIO_NUM_1
 #define UART_RX GPIO_NUM_2
@@ -95,6 +96,7 @@ stored_values_t stored = {
 };
 
 static bool crosshair_enabled = false;
+static esp_err_t boot_analog_video_status = ESP_ERR_INVALID_STATE;
 
 static bool json_obj_has_key(const jparse_ctx_t *jctx, const char *key) {
     const int object_index = jctx->cur - jctx->tokens;
@@ -419,10 +421,13 @@ static esp_err_t retireve_values(httpd_req_t *req) {
     \"sensor_width\": %u, \
     \"sensor_height\": %u, \
     \"refresh_flip_mode\": %u, \
-    \"crosshair_enabled\": %u \
+    \"crosshair_enabled\": %u, \
+    \"firmware_version\": \"%s\", \
+    \"boot_analog_video_ok\": %u, \
+    \"boot_analog_video_status\": %d \
     }";
 
-    char out_json[512];
+    char out_json[640];
 
     int res = snprintf(out_json, sizeof(out_json), out_format,
         PRESET_COUNT,
@@ -443,10 +448,13 @@ static esp_err_t retireve_values(httpd_req_t *req) {
         cam.variant.sensor_width,
         cam.variant.sensor_height,
         stored.alignment.refresh_flip_mode,
-        (uint8_t)crosshair_enabled
+        (uint8_t)crosshair_enabled,
+        FIRMWARE_VERSION,
+        boot_analog_video_status == ESP_OK,
+        boot_analog_video_status
     );
 
-    if (res <= 0) {
+    if (res <= 0 || (size_t)res >= sizeof(out_json)) {
         return ESP_FAIL;
     }
 
@@ -544,7 +552,12 @@ void app_main(void) {
     if (err != ESP_OK) {
         ESP_LOGI(TAG, "Failed to read stores from NVS, going with defaults.");
     }
-    Mini2_apply_preset(&cam, &stored.presets[stored.active_preset], &stored.alignment, false);
+    boot_analog_video_status = Mini2_apply_preset(&cam, &stored.presets[stored.active_preset], &stored.alignment, false);
+    if (boot_analog_video_status == ESP_OK) {
+        ESP_LOGI(TAG, "Boot analog video initialization succeeded");
+    } else {
+        ESP_LOGE(TAG, "Boot analog video initialization failed: %s", esp_err_to_name(boot_analog_video_status));
+    }
 
     xTaskCreate(loop_task, "loop task", 16384, NULL, 5, NULL);
 

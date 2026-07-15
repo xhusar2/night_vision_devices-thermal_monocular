@@ -260,22 +260,20 @@ esp_err_t Mini2_Background_Correction(Mini2_t* cam) {
     return Mini2_write_command(cam, cmd, sizeof(cmd));
 }
 
-void Mini2_apply_preset(Mini2_t* cam, value_preset_t* preset, alignment_preset_t* alignment, bool seem_less) {
+esp_err_t Mini2_apply_preset(Mini2_t* cam, value_preset_t* preset, alignment_preset_t* alignment, bool seem_less) {
     esp_err_t err;
+    esp_err_t analog_video_err = ESP_OK;
+    bool format_matches = false;
     
     if (!seem_less) {
         enum AnalogVideoFormat format;
         err = Mini2_get_analog_video_format(cam, &format);
-        const bool format_matches = err == ESP_OK && format == alignment->av_format;
+        format_matches = err == ESP_OK && format == alignment->av_format;
         if (format_matches) {
             ESP_LOGI(Mini2_TAG, "Format already matches.");
         } else {
             ESP_LOGE(Mini2_TAG, "Failed to read av format, or found missmatch");
             Mini2_set_digital_video_format(cam, true, UsbProgressive, Hz50);
-        }
-        Mini2_set_analog_video_format(cam, alignment->av_format);
-        if (!format_matches) {
-            Mini2_save_video(cam);
         }
     }
 
@@ -302,4 +300,13 @@ void Mini2_apply_preset(Mini2_t* cam, value_preset_t* preset, alignment_preset_t
         }
         vTaskDelay(pdMS_TO_TICKS(50));
     }
+
+    if (!seem_less) {
+        analog_video_err = Mini2_set_analog_video_format(cam, alignment->av_format);
+        if (!format_matches) {
+            Mini2_save_video(cam);
+        }
+    }
+
+    return analog_video_err;
 }

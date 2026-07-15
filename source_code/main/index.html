@@ -81,6 +81,19 @@
 
     #status.error { color: #fb7185; }
 
+    .diagnostics {
+      margin: 12px 4px 0;
+      color: var(--text_muted);
+      font-size: 0.72rem;
+    }
+
+    #diagnostic_log {
+      max-height: 7rem;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
     .section-title {
       font-size: 0.7rem;
       text-transform: uppercase;
@@ -415,11 +428,22 @@
       </div>
     </div>
     <p id="status" role="status" aria-live="polite"></p>
+    <footer class="diagnostics">
+      <div>Firmware <span id="firmware_version">unknown</span></div>
+      <div id="diagnostic_log" role="log" aria-live="polite"></div>
+    </footer>
   </div>
 
   <script>
     let sensor_width = 256;
     let sensor_height = 192;
+    const diagnosticEntries = [];
+
+    function logDiagnostic(message) {
+      diagnosticEntries.push(`${new Date().toLocaleTimeString()} ${message}`);
+      if (diagnosticEntries.length > 20) diagnosticEntries.shift();
+      document.getElementById("diagnostic_log").textContent = diagnosticEntries.join("\n");
+    }
 
     function setStatus(message, isError = false) {
       const status = document.getElementById("status");
@@ -454,6 +478,9 @@
       zoom_y.max = (sensor_height / 2) + y_room;
       zoom_x.value = Math.min(Number(zoom_x.max), Math.max(Number(zoom_x.min), Number(zoom_x.value)));
       zoom_y.value = Math.min(Number(zoom_y.max), Math.max(Number(zoom_y.min), Number(zoom_y.value)));
+      const aimEnabled = parseInt(zoom.value, 10) > 10;
+      zoom_x.disabled = !aimEnabled;
+      zoom_y.disabled = !aimEnabled;
       showRangeValue(zoom);
       showRangeValue(zoom_x);
       showRangeValue(zoom_y);
@@ -466,6 +493,7 @@
       const zoom_x = parseInt(document.getElementById("zoom_x").value, 10);
       const zoom_y = parseInt(document.getElementById("zoom_y").value, 10);
       setStatus("Saving…");
+      logDiagnostic(`SET zoom=${zoom} x=${zoom_x} y=${zoom_y}`);
       fetch("/set", {
         method: "POST",
         body: JSON.stringify({ zoom: {
@@ -475,9 +503,11 @@
         }})
       }).then(response => {
         if (!response.ok) throw new Error(`Device rejected the setting (${response.status})`);
+        logDiagnostic("SET zoom accepted");
         return sync_data();
       }).then(() => setStatus("Saved on device"))
         .catch(error => {
+          logDiagnostic(`ERROR ${error.message}`);
           setStatus(error.message, true);
           return sync_data().catch(() => {});
         });
@@ -489,14 +519,17 @@
       }
       const parsedValue = parseInt(value, 10);
       setStatus("Saving…");
+      logDiagnostic(`SET ${key}=${parsedValue}`);
       return fetch("/set", {
         method: "POST",
         body: JSON.stringify({ [key]: parsedValue })
       }).then(response => {
         if (!response.ok) throw new Error(`Device rejected the setting (${response.status})`);
+        logDiagnostic(`SET ${key} accepted`);
         return sync_data();
       }).then(() => setStatus("Saved on device"))
         .catch(error => {
+          logDiagnostic(`ERROR ${error.message}`);
           setStatus(error.message, true);
           return sync_data();
         });
@@ -507,6 +540,7 @@
     }
 
     function sync_data() {
+      logDiagnostic("GET initial/state sync");
       return fetch('/get')
       .then(response => {
         if (!response.ok) throw new Error(`Unable to read device state (${response.status})`);
@@ -514,8 +548,16 @@
       })
       .then(data => {
         console.log("Syncing data:", data);
+        document.getElementById("firmware_version").textContent = data.firmware_version || "unknown";
+        if (Object.prototype.hasOwnProperty.call(data, "boot_analog_video_ok")) {
+          logDiagnostic(data.boot_analog_video_ok
+            ? "BOOT analog video initialized"
+            : `BOOT analog video failed (${data.boot_analog_video_status})`);
+        }
         for (const key in data) {
-          if (key === "sensor_width") {
+          if (key === "firmware_version" || key === "boot_analog_video_ok" || key === "boot_analog_video_status") {
+            continue;
+          } else if (key === "sensor_width") {
             sensor_width = data[key];
           } else if (key === "sensor_height") {
             sensor_height = data[key];
@@ -561,6 +603,7 @@
         updateZoomLimits();
       })
       .catch(error => {
+        logDiagnostic(`ERROR ${error.message}`);
         setStatus(error.message, true);
         throw error;
       });
