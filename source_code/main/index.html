@@ -584,7 +584,8 @@
         document.getElementById("firmware_version").textContent = data.firmware_version || "unknown";
         if (Object.prototype.hasOwnProperty.call(data, "boot_analog_video_initial_ok")) {
           logDiagnostic(`BOOT analog initial ${data.boot_analog_video_initial_ok ? "ok" : `failed (${data.boot_analog_video_initial_status})`}`);
-          logDiagnostic(`BOOT analog delayed ${data.boot_analog_video_delayed_ok ? "ok" : `failed (${data.boot_analog_video_delayed_status})`}`);
+          logDiagnostic(`BOOT analog opposite ${data.boot_analog_video_opposite_ok ? "ok" : `failed (${data.boot_analog_video_opposite_status})`}`);
+          logDiagnostic(`BOOT analog restore ${data.boot_analog_video_restore_ok ? "ok" : `failed (${data.boot_analog_video_restore_status})`}`);
         }
         for (const key in data) {
           if (key === "firmware_version" || key.startsWith("boot_analog_video_")) {

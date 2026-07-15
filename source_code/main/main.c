@@ -22,7 +22,7 @@
 #define SSID "THERMAL_MONOCULAR"
 #define PASSWORD "password123"
 #define PRESET_COUNT 3
-#define FIRMWARE_VERSION "0.4.0"
+#define FIRMWARE_VERSION "0.4.1"
 
 #define UART_TX GPIO_NUM_1
 #define UART_RX GPIO_NUM_2
@@ -98,7 +98,8 @@ stored_values_t stored = {
 static bool crosshair_enabled = false;
 static bool wifi_next_boot = false;
 static esp_err_t boot_analog_video_initial_status = ESP_ERR_INVALID_STATE;
-static esp_err_t boot_analog_video_delayed_status = ESP_ERR_INVALID_STATE;
+static esp_err_t boot_analog_video_opposite_status = ESP_ERR_INVALID_STATE;
+static esp_err_t boot_analog_video_restore_status = ESP_ERR_INVALID_STATE;
 
 static esp_err_t commit_settings(void) {
     esp_err_t err = nvs_set_blob(flash_handle, "stored_values", &stored, sizeof(stored));
@@ -420,37 +421,9 @@ static esp_err_t post_handler(httpd_req_t *req) {
 }
 
 static esp_err_t retireve_values(httpd_req_t *req) {
-    static char out_format[] = "{ \
-    \"preset_count\": %u, \
-    \"active_profile\": %u, \
-    \"preset_en\": %u, \
-    \"pseudo_color\": %u, \
-    \"scene_mode\": %u, \
-    \"contrast\": %u, \
-    \"edge_enhancment_gear\": %u, \
-    \"detail_enhancement_gear\": %u, \
-    \"burn_protection_en\": %u, \
-    \"auto_shutter_en\": %u, \
-    \"flip_mode\": %u, \
-    \"zoom\": %u, \
-    \"zoom_x\": %u, \
-    \"zoom_y\": %u, \
-    \"av_format\": %u, \
-    \"sensor_width\": %u, \
-    \"sensor_height\": %u, \
-    \"refresh_flip_mode\": %u, \
-    \"crosshair_enabled\": %u, \
-    \"wifi_next_boot\": %u, \
-    \"firmware_version\": \"%s\", \
-    \"boot_analog_video_initial_ok\": %u, \
-    \"boot_analog_video_initial_status\": %d, \
-    \"boot_analog_video_delayed_ok\": %u, \
-    \"boot_analog_video_delayed_status\": %d \
-    }";
+    char out_json[CONTROL_STATE_JSON_BUFFER_SIZE];
 
-    char out_json[640];
-
-    int res = snprintf(out_json, sizeof(out_json), out_format,
+    int res = snprintf(out_json, sizeof(out_json), CONTROL_STATE_JSON_FORMAT,
         PRESET_COUNT,
         stored.active_preset,
         (uint8_t)stored.presets[stored.active_preset].preset_en,
@@ -474,16 +447,20 @@ static esp_err_t retireve_values(httpd_req_t *req) {
         FIRMWARE_VERSION,
         boot_analog_video_initial_status == ESP_OK,
         boot_analog_video_initial_status,
-        boot_analog_video_delayed_status == ESP_OK,
-        boot_analog_video_delayed_status
+        boot_analog_video_opposite_status == ESP_OK,
+        boot_analog_video_opposite_status,
+        boot_analog_video_restore_status == ESP_OK,
+        boot_analog_video_restore_status
     );
 
     if (res <= 0 || (size_t)res >= sizeof(out_json)) {
-        return ESP_FAIL;
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        return httpd_resp_sendstr(req, "{\"error\":\"state_format_failed\"}");
     }
 
-    httpd_resp_send(req, out_json, res);
-    return ESP_OK;
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, out_json, res);
 }
 
 static const httpd_uri_t retireve_values_route = {
@@ -592,9 +569,13 @@ void app_main(void) {
     } else {
         ESP_LOGE(TAG, "Boot analog video initialization failed: %s", esp_err_to_name(boot_analog_video_initial_status));
     }
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    boot_analog_video_delayed_status = Mini2_set_analog_video_format(&cam, stored.alignment.av_format);
-    ESP_LOGI(TAG, "Delayed analog video activation: %s", esp_err_to_name(boot_analog_video_delayed_status));
+    const enum AnalogVideoFormat opposite_format = stored.alignment.av_format == PAL ? NTSC : PAL;
+    boot_analog_video_opposite_status = Mini2_set_analog_video_format(&cam, opposite_format);
+    ESP_LOGI(TAG, "Boot analog video opposite format: %s", esp_err_to_name(boot_analog_video_opposite_status));
+    // Give the camera time to activate the changed analog output before restoring the saved format.
+    vTaskDelay(pdMS_TO_TICKS(100));
+    boot_analog_video_restore_status = Mini2_set_analog_video_format(&cam, stored.alignment.av_format);
+    ESP_LOGI(TAG, "Boot analog video stored format restore: %s", esp_err_to_name(boot_analog_video_restore_status));
 
     xTaskCreate(loop_task, "loop task", 16384, NULL, 5, NULL);
 
