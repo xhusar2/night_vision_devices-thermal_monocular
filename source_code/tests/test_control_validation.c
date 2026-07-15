@@ -69,6 +69,21 @@ static char *read_text(const char *path) {
     return text;
 }
 
+static uint16_t frame_crc(uint16_t x, uint16_t y) {
+    uint8_t payload[16] = {0x10, 0x11, 0x58, 0x00,
+                           (uint8_t)(x & 0xff), (uint8_t)(x >> 8),
+                           (uint8_t)(y & 0xff), (uint8_t)(y >> 8)};
+    uint16_t crc = 0;
+    for (size_t i = 0; i < sizeof(payload); i++) {
+        crc ^= (uint16_t)payload[i] << 8;
+        for (int bit = 0; bit < 8; bit++) {
+            crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021)
+                                 : (uint16_t)(crc << 1);
+        }
+    }
+    return crc;
+}
+
 int main(void) {
     assert(control_point_zoom_is_valid(0, 0, 11, 256, 192));
     assert(control_point_zoom_is_valid(255, 191, 80, 256, 192));
@@ -79,6 +94,12 @@ int main(void) {
     assert(!control_point_zoom_is_valid(128, 96, 10, 256, 192));
     assert(!control_point_zoom_is_valid(128, 96, 81, 256, 192));
     assert(!control_point_zoom_is_valid(0, 0, 10, 0, 192));
+    assert(control_crosshair_position_is_valid(0, 0, 256, 192));
+    assert(control_crosshair_position_is_valid(255, 191, 256, 192));
+    assert(!control_crosshair_position_is_valid(256, 191, 256, 192));
+    assert(!control_crosshair_position_is_valid(255, 192, 256, 192));
+    assert(frame_crc(128, 96) == 0x24e9); /* transmitted E9 24 */
+    assert(frame_crc(300, 280) == 0x5034); /* transmitted 34 50 */
     assert(control_percent_is_valid(0) && control_percent_is_valid(100));
     assert(!control_percent_is_valid(-1) && !control_percent_is_valid(101));
     assert(control_edge_gear_is_valid(2) && !control_edge_gear_is_valid(3));
@@ -165,14 +186,14 @@ int main(void) {
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
         INT_MIN, INT_MIN, INT_MIN, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
-        UINT_MAX, UINT_MAX, UINT_MAX, "0.4.8",
+        UINT_MAX, UINT_MAX, UINT_MAX, "0.4.9",
         UINT_MAX, INT_MIN, UINT_MAX, INT_MIN, UINT_MAX, INT_MIN);
     assert(state_length > 0);
     assert((size_t)state_length < sizeof(state_json));
 
     char *main_source = read_text("main/main.c");
     assert(strstr(main_source, "boot_analog_video_task") == NULL);
-    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.8\"") != NULL);
+    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.9\"") != NULL);
     assert(strstr(main_source, "value < NTSC || value > PAL") != NULL);
     assert(strstr(main_source, "stored.alignment.av_format = (enum AnalogVideoFormat)value") != NULL);
     assert(strstr(main_source, "request_err = Mini2_set_analog_video_format") != NULL);
@@ -206,28 +227,30 @@ int main(void) {
     const char *restore_flip = strstr(restore, "Mini2_set_flip_mode");
     const char *restore_zoom = strstr(restore, "Mini2_set_point_zoom");
     const char *restore_crosshair = strstr(restore, "Mini2_set_crosshair");
+    const char *restore_crosshair_position = strstr(restore_crosshair, "Mini2_set_crosshair_position");
     assert(restore_palette < restore_scene && restore_scene < restore_contrast &&
            restore_contrast < restore_edge && restore_edge < restore_detail &&
            restore_detail < restore_burn && restore_burn < restore_shutter &&
            restore_shutter < restore_analog && restore_analog < restore_flip &&
-           restore_flip < restore_zoom && restore_zoom < restore_crosshair);
+           restore_flip < restore_zoom && restore_zoom < restore_crosshair &&
+           restore_crosshair < restore_crosshair_position);
     assert(strstr(restore_crosshair, "if (err == ESP_OK)") != NULL);
     assert(strstr(main_source, "nvs_set_u8(flash_handle, \"crosshair_mask\", crosshair_preset_mask)") != NULL);
     assert(strstr(main_source, "Mini2_set_crosshair(&cam, preset_crosshair_enabled(stored.active_preset))") != NULL);
+    assert(strstr(main_source, "nvs_set_blob(flash_handle, \"cursor_pos\"") != NULL);
+    assert(strstr(main_source, "nvs_set_u8(flash_handle, \"cursor_migrated\", 1)") != NULL);
+    assert(strstr(main_source, "stored.alignment.zoom = 10") != NULL);
+    assert(strstr(main_source, "json_obj_get_object(&jctx, \"crosshair_position\")") != NULL);
     free(main_source);
 
     char *html = read_text("main/index.html");
-    assert(strstr(html, "aim zoom must be at least 1.1×") != NULL);
     assert(strstr(html, "Hold the preset button for 2 seconds") != NULL);
-    assert(strstr(html, "id=\"aim_zoom\" min=\"11\"") != NULL);
-    assert(strstr(html, "zoom_x_minus") != NULL && strstr(html, "zoom_y_plus") != NULL);
-    assert(strstr(html, "zoom_x.min = 0") != NULL);
+    assert(strstr(html, "aim_zoom") == NULL);
+    assert(strstr(html, "Aim crop zoom") == NULL);
+    assert(strstr(html, "crosshair_x_minus") != NULL && strstr(html, "crosshair_y_plus") != NULL);
     assert(strstr(html, "zoom_x.max = sensor_width - 1") != NULL);
-    assert(strstr(html, "zoom_y.min = 0") != NULL);
     assert(strstr(html, "zoom_y.max = sensor_height - 1") != NULL);
-    assert(strstr(html, "zoom_x.disabled") == NULL);
-    assert(strstr(html, "x: zoom_x") != NULL && strstr(html, "y: zoom_y") != NULL);
-    assert(strstr(html, "zoom: zoom") != NULL);
+    assert(strstr(html, "crosshair_position") != NULL);
     assert(strstr(html, "Camera state is not synchronized") != NULL);
     assert(strstr(html, "cameraStateAuthoritative = data.camera_state_authoritative !== 0") != NULL);
     assert(strstr(html, "persistenceAuthoritative = data.persistence_authoritative !== 0") != NULL);
@@ -252,6 +275,10 @@ int main(void) {
     assert(strstr(mini2, "memset(out_buf, 0, expected_len)") != NULL);
     assert(strstr(mini2, "bytes_read <= 0 || (size_t)bytes_read != expected_len") != NULL);
     assert(strstr(mini2, "uint8_t rx_buffer[11] = {0}") != NULL);
+    const char *position = strstr(mini2, "esp_err_t Mini2_set_crosshair_position");
+    assert(position != NULL);
+    assert(strstr(position, "(uint8_t)(x & 0xff), (uint8_t)(x >> 8)") != NULL);
+    assert(strstr(position, "(uint8_t)(y & 0xff), (uint8_t)(y >> 8)") != NULL);
     free(mini2);
     return 0;
 }

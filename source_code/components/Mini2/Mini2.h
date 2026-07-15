@@ -118,6 +118,7 @@ esp_err_t Mini2_set_centre_zoom(Mini2_t* cam, uint8_t zoom);
 esp_err_t Mini2_set_point_zoom(Mini2_t* cam, uint16_t x, uint16_t y, uint8_t zoom);
 esp_err_t Mini2_set_detector_fps(Mini2_t* cam, enum DetectorRefreshRate fps);
 esp_err_t Mini2_set_crosshair(Mini2_t* cam, bool enable);
+esp_err_t Mini2_set_crosshair_position(Mini2_t* cam, uint16_t x, uint16_t y);
 esp_err_t Mini2_set_sleep(Mini2_t* cam, bool sleep);
 esp_err_t Mini2_parameters_save(Mini2_t* cam);
 esp_err_t Mini2_restore_factory_parameters(Mini2_t* cam);

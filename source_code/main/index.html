@@ -435,36 +435,29 @@
             <span class="slider"></span>
           </label>
         </div>
-        <p class="hint">The native crosshair has no position command. Hold the preset button for 2 seconds to toggle the crosshair for the current preset; a short press changes preset. X/Y uses a small image crop beneath the fixed overlay; aim zoom must be at least 1.1×.</p>
+        <p class="hint">Hold the preset button for 2 seconds to toggle the crosshair for the current preset; a short press changes preset. Position is saved independently for each preset.</p>
       </div>
       <div>
         <label for="wifi_next_boot">Wi-Fi on next boot</label>
         <div><label class="switch"><input id="wifi_next_boot" onchange="updateValue(this.id, this.checked ? 1 : 0)" type="checkbox"><span class="slider"></span></label></div>
         <p class="hint">One shot: this flag is cleared when the next boot enables Wi-Fi.</p>
       </div>
-      <div id="zoom_div" class="aim-control">
-        <label for="aim_zoom">Aim crop zoom</label>
+      <div class="aim-control">
+        <label for="crosshair_x">Crosshair Horizontal</label>
         <div class="range-control">
-          <input class="zoom_slider" type="range" id="aim_zoom" min="11" max="15" value="11" oninput="showRangeValue(this)" onchange="updateZoom()">
-          <output id="aim_zoom_value">1.1×</output>
+          <button class="step-button" id="crosshair_x_minus" type="button" aria-label="Move crosshair left" onclick="adjustCrosshair('crosshair_x', -1)">−</button>
+          <input class="zoom_slider" type="range" id="crosshair_x" min="0" max="255" value="128" oninput="showRangeValue(this)" onchange="updateCrosshairPosition()">
+          <button class="step-button" id="crosshair_x_plus" type="button" aria-label="Move crosshair right" onclick="adjustCrosshair('crosshair_x', 1)">+</button>
+          <output id="crosshair_x_value">128</output>
         </div>
       </div>
       <div class="aim-control">
-        <label for="zoom_x">Horizontal</label>
+        <label for="crosshair_y">Crosshair Vertical</label>
         <div class="range-control">
-          <button class="step-button" id="zoom_x_minus" type="button" aria-label="Decrease horizontal aim" onclick="adjustAim('zoom_x', -1)">−</button>
-          <input class="zoom_slider" type="range" id="zoom_x" min="0" max="255" value="128" oninput="showRangeValue(this)" onchange="updateZoom()">
-          <button class="step-button" id="zoom_x_plus" type="button" aria-label="Increase horizontal aim" onclick="adjustAim('zoom_x', 1)">+</button>
-          <output id="zoom_x_value">128</output>
-        </div>
-      </div>
-      <div class="aim-control">
-        <label for="zoom_y">Vertical</label>
-        <div class="range-control">
-          <button class="step-button" id="zoom_y_minus" type="button" aria-label="Decrease vertical aim" onclick="adjustAim('zoom_y', -1)">−</button>
-          <input class="zoom_slider" type="range" id="zoom_y" min="0" max="191" value="96" oninput="showRangeValue(this)" onchange="updateZoom()">
-          <button class="step-button" id="zoom_y_plus" type="button" aria-label="Increase vertical aim" onclick="adjustAim('zoom_y', 1)">+</button>
-          <output id="zoom_y_value">96</output>
+          <button class="step-button" id="crosshair_y_minus" type="button" aria-label="Move crosshair up" onclick="adjustCrosshair('crosshair_y', -1)">−</button>
+          <input class="zoom_slider" type="range" id="crosshair_y" min="0" max="191" value="96" oninput="showRangeValue(this)" onchange="updateCrosshairPosition()">
+          <button class="step-button" id="crosshair_y_plus" type="button" aria-label="Move crosshair down" onclick="adjustCrosshair('crosshair_y', 1)">+</button>
+          <output id="crosshair_y_value">96</output>
         </div>
       </div>
     </div>
@@ -505,9 +498,7 @@
     function showRangeValue(input) {
       const output = document.getElementById(`${input.id}_value`);
       if (output === null) return;
-      output.textContent = input.id === "aim_zoom"
-        ? `${(parseInt(input.value, 10) / 10).toFixed(1)}×`
-        : input.value;
+      output.textContent = input.value;
     }
 
     function setAimControlsVisible(visible) {
@@ -517,9 +508,8 @@
     }
 
     function updateZoomLimits() {
-      const zoom = document.getElementById("aim_zoom");
-      const zoom_x = document.getElementById("zoom_x");
-      const zoom_y = document.getElementById("zoom_y");
+      const zoom_x = document.getElementById("crosshair_x");
+      const zoom_y = document.getElementById("crosshair_y");
 
       zoom_x.min = 0;
       zoom_x.max = sensor_width - 1;
@@ -527,16 +517,15 @@
       zoom_y.max = sensor_height - 1;
       zoom_x.value = Math.min(Number(zoom_x.max), Math.max(Number(zoom_x.min), Number(zoom_x.value)));
       zoom_y.value = Math.min(Number(zoom_y.max), Math.max(Number(zoom_y.min), Number(zoom_y.value)));
-      showRangeValue(zoom);
       showRangeValue(zoom_x);
       showRangeValue(zoom_y);
     }
 
-    function adjustAim(id, delta) {
+    function adjustCrosshair(id, delta) {
       const input = document.getElementById(id);
       input.value = Math.min(Number(input.max), Math.max(Number(input.min), Number(input.value) + delta));
       showRangeValue(input);
-      updateZoom();
+      updateCrosshairPosition();
     }
 
     function adjustImageLevel(id, delta) {
@@ -545,24 +534,22 @@
       updateValue(id, input.value);
     }
 
-    function updateZoom() {
+    function updateCrosshairPosition() {
       updateZoomLimits();
 
-      const zoom = parseInt(document.getElementById("aim_zoom").value, 10);
-      const zoom_x = parseInt(document.getElementById("zoom_x").value, 10);
-      const zoom_y = parseInt(document.getElementById("zoom_y").value, 10);
+      const zoom_x = parseInt(document.getElementById("crosshair_x").value, 10);
+      const zoom_y = parseInt(document.getElementById("crosshair_y").value, 10);
       setStatus("Saving…");
-      logDiagnostic(`SET zoom=${zoom} x=${zoom_x} y=${zoom_y}`);
+      logDiagnostic(`SET crosshair x=${zoom_x} y=${zoom_y}`);
       fetch("/set", {
         method: "POST",
-        body: JSON.stringify({ zoom: {
-          zoom: zoom,
+        body: JSON.stringify({ crosshair_position: {
           x: zoom_x,
           y: zoom_y
         }})
       }).then(response => {
         if (!response.ok) throw new Error(`Device rejected the setting (${response.status})`);
-        logDiagnostic("SET zoom accepted");
+        logDiagnostic("SET crosshair position accepted");
         return sync_data();
       }).then(setSavedStatus)
         .catch(error => {
@@ -631,12 +618,10 @@
             sensor_width = data[key];
           } else if (key === "sensor_height") {
             sensor_height = data[key];
-          } else if (key === "zoom_x") {
-            document.getElementById("zoom_x").value = data[key];
-          } else if (key === "zoom_y") {
-            document.getElementById("zoom_y").value = data[key];
-          } else if (key === "zoom") {
-            document.getElementById("aim_zoom").value = Math.max(11, data[key]);
+          } else if (key === "crosshair_x") {
+            document.getElementById("crosshair_x").value = data[key];
+          } else if (key === "crosshair_y") {
+            document.getElementById("crosshair_y").value = data[key];
           } else if (key === "auto_shutter_en" || key === "burn_protection_en" || key === "preset_en" || key === "refresh_flip_mode" || key === "crosshair_enabled" || key === "wifi_next_boot") {
             const checkbox = document.getElementById(key);
             if (checkbox !== null) {

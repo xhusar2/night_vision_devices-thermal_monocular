@@ -259,6 +259,18 @@ esp_err_t Mini2_set_crosshair(Mini2_t* cam, bool enable) {
     return Mini2_write_command(cam, cmd, sizeof(cmd));
 }
 
+esp_err_t Mini2_set_crosshair_position(Mini2_t* cam, uint16_t x, uint16_t y) {
+    if (x >= cam->variant.sensor_width || y >= cam->variant.sensor_height) {
+        ESP_LOGE(Mini2_TAG, "Crosshair position is outside the sensor");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    uint8_t cmd[] = {0x10, 0x11, 0x58, 0x00,
+                     (uint8_t)(x & 0xff), (uint8_t)(x >> 8),
+                     (uint8_t)(y & 0xff), (uint8_t)(y >> 8)};
+    return Mini2_write_command(cam, cmd, sizeof(cmd));
+}
+
 esp_err_t Mini2_parameters_save(Mini2_t* cam) {
     uint8_t cmd[] = {0x10, 0x10, 0x51};
     return Mini2_write_command(cam, cmd, sizeof(cmd));

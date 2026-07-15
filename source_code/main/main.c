@@ -22,7 +22,7 @@
 #define SSID "THERMAL_MONOCULAR"
 #define PASSWORD "password123"
 #define PRESET_COUNT 3
-#define FIRMWARE_VERSION "0.4.8"
+#define FIRMWARE_VERSION "0.4.9"
 #define BUTTON_DEBOUNCE_US (50 * 1000)
 #define BUTTON_LONG_PRESS_US (2 * 1000 * 1000)
 #define PERSIST_ATTEMPTS 3
@@ -86,7 +86,7 @@ value_preset_t base_preset = {
 stored_values_t stored = {
     .active_preset = 0,
     .alignment = {
-        .zoom = 11,
+        .zoom = 10,
         .zoom_x = 128,
         .zoom_y = 96,
         .av_format = PAL,
@@ -98,6 +98,14 @@ stored_values_t stored = {
 };
 
 static uint8_t crosshair_preset_mask = 0;
+typedef struct {
+    uint16_t x[PRESET_COUNT];
+    uint16_t y[PRESET_COUNT];
+} crosshair_positions_t;
+static crosshair_positions_t crosshair_positions = {
+    .x = {128, 128, 128},
+    .y = {96, 96, 96},
+};
 typedef struct {
     uint8_t spatial[PRESET_COUNT];
     uint8_t temporal[PRESET_COUNT];
@@ -137,6 +145,9 @@ static esp_err_t commit_settings(void) {
     }
     if (err == ESP_OK) {
         err = nvs_set_blob(flash_handle, "image_controls", &image_controls, sizeof(image_controls));
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_blob(flash_handle, "cursor_pos", &crosshair_positions, sizeof(crosshair_positions));
     }
     return err == ESP_OK ? nvs_commit(flash_handle) : err;
 }
@@ -189,6 +200,8 @@ static esp_err_t apply_preset_with_crosshair(uint8_t preset) {
     if (err != ESP_OK) {
         return err;
     }
+    err = Mini2_set_crosshair_position(&cam, crosshair_positions.x[preset],
+                                       crosshair_positions.y[preset]);
     if (image_controls.spatial_mask & (1U << preset))
         err = Mini2_set_spatial_noise_reduction(&cam, image_controls.spatial[preset]);
     if (err == ESP_OK && (image_controls.temporal_mask & (1U << preset)))
@@ -226,6 +239,8 @@ static esp_err_t restore_camera_snapshot(const stored_values_t *snapshot,
         snapshot->alignment.zoom));
     err = control_first_error(err, Mini2_set_crosshair(
         &cam, (snapshot_crosshair_mask & (1U << preset_index)) != 0));
+    err = control_first_error(err, Mini2_set_crosshair_position(
+        &cam, crosshair_positions.x[preset_index], crosshair_positions.y[preset_index]));
 
     if (err == ESP_OK) {
         last_applied_preset = preset_index;
@@ -399,6 +414,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
     const stored_values_t previous_stored = stored;
     const uint8_t previous_crosshair_mask = crosshair_preset_mask;
     const image_controls_t previous_image_controls = image_controls;
+    const crosshair_positions_t previous_crosshair_positions = crosshair_positions;
     const bool previous_wifi_next_boot = wifi_next_boot;
 
     char* buf = (char*)malloc(req->content_len);
@@ -598,6 +614,35 @@ static esp_err_t post_handler(httpd_req_t *req) {
         json_obj_leave_object(&jctx);
     }
 
+    const bool has_crosshair_position = json_obj_has_key(&jctx, "crosshair_position");
+    ret = json_obj_get_object(&jctx, "crosshair_position");
+    if (has_crosshair_position && ret != OS_SUCCESS) {
+        request_err = ESP_ERR_INVALID_ARG;
+        request_error_message = "Invalid crosshair position object";
+        goto invalid_request;
+    }
+    if (has_crosshair_position) {
+        int x, y;
+        if (json_obj_get_int(&jctx, "x", &x) != OS_SUCCESS ||
+            json_obj_get_int(&jctx, "y", &y) != OS_SUCCESS ||
+            !control_crosshair_position_is_valid(x, y, cam.variant.sensor_width,
+                                                  cam.variant.sensor_height)) {
+            json_obj_leave_object(&jctx);
+            request_err = ESP_ERR_INVALID_ARG;
+            request_error_message = "Invalid crosshair coordinates";
+            goto invalid_request;
+        }
+        request_err = Mini2_set_crosshair_position(&cam, (uint16_t)x, (uint16_t)y);
+        if (request_err != ESP_OK) {
+            json_obj_leave_object(&jctx);
+            goto uart_failure;
+        }
+        device_mutated = true;
+        crosshair_positions.x[stored.active_preset] = (uint16_t)x;
+        crosshair_positions.y[stored.active_preset] = (uint16_t)y;
+        json_obj_leave_object(&jctx);
+    }
+
     const bool has_crosshair_enabled = json_obj_has_key(&jctx, "crosshair_enabled");
     ret = json_obj_get_bool(&jctx, "crosshair_enabled", &bool_val);
     if (has_crosshair_enabled && ret != OS_SUCCESS) {
@@ -662,6 +707,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
         stored = previous_stored;
         crosshair_preset_mask = previous_crosshair_mask;
         image_controls = previous_image_controls;
+        crosshair_positions = previous_crosshair_positions;
         wifi_next_boot = previous_wifi_next_boot;
         esp_err_t rollback_err = ESP_OK;
         if (control_rollback_required(device_mutated)) {
@@ -685,6 +731,7 @@ uart_failure:
     stored = previous_stored;
     crosshair_preset_mask = previous_crosshair_mask;
     image_controls = previous_image_controls;
+    crosshair_positions = previous_crosshair_positions;
     wifi_next_boot = previous_wifi_next_boot;
     if (control_rollback_required(device_mutated)) {
         esp_err_t rollback_err = restore_camera_snapshot(&stored, crosshair_preset_mask);
@@ -702,6 +749,7 @@ invalid_request:
     stored = previous_stored;
     crosshair_preset_mask = previous_crosshair_mask;
     image_controls = previous_image_controls;
+    crosshair_positions = previous_crosshair_positions;
     wifi_next_boot = previous_wifi_next_boot;
     if (control_rollback_required(device_mutated)) {
         esp_err_t rollback_err = restore_camera_snapshot(&stored, crosshair_preset_mask);
@@ -733,8 +781,8 @@ static esp_err_t retireve_values(httpd_req_t *req) {
         (uint8_t)stored.presets[stored.active_preset].auto_shutter_en,
         (uint8_t)stored.alignment.flip_mode,
         stored.alignment.zoom,
-        stored.alignment.zoom_x,
-        stored.alignment.zoom_y,
+        crosshair_positions.x[stored.active_preset],
+        crosshair_positions.y[stored.active_preset],
         stored.alignment.av_format,
         cam.variant.sensor_width,
         cam.variant.sensor_height,
@@ -814,6 +862,26 @@ void app_main(void) {
         image_controls_len != sizeof(image_controls)) {
         memset(&image_controls, 0, sizeof(image_controls));
     }
+    size_t cursor_positions_len = sizeof(crosshair_positions);
+    uint8_t cursor_migrated = 0;
+    if (nvs_get_blob(flash_handle, "cursor_pos", &crosshair_positions,
+                     &cursor_positions_len) != ESP_OK ||
+        cursor_positions_len != sizeof(crosshair_positions)) {
+        for (int i = 0; i < PRESET_COUNT; i++) {
+            crosshair_positions.x[i] = stored.alignment.zoom_x < cam.variant.sensor_width
+                ? stored.alignment.zoom_x : cam.variant.sensor_width - 1;
+            crosshair_positions.y[i] = stored.alignment.zoom_y < cam.variant.sensor_height
+                ? stored.alignment.zoom_y : cam.variant.sensor_height - 1;
+        }
+    }
+    if (nvs_get_u8(flash_handle, "cursor_migrated", &cursor_migrated) != ESP_OK ||
+        cursor_migrated == 0) {
+        stored.alignment.zoom = 10;
+        stored.alignment.zoom_x = cam.variant.sensor_width / 2;
+        stored.alignment.zoom_y = cam.variant.sensor_height / 2;
+        ESP_ERROR_CHECK(nvs_set_u8(flash_handle, "cursor_migrated", 1));
+        ESP_ERROR_CHECK(commit_settings());
+    }
     persisted_value = 0;
     if (nvs_get_u8(flash_handle, "wifi_next", &persisted_value) == ESP_OK) {
         wifi_next_boot = persisted_value != 0;
@@ -873,6 +941,11 @@ void app_main(void) {
     esp_err_t boot_crosshair_status = Mini2_set_crosshair(&cam, preset_crosshair_enabled(stored.active_preset));
     if (boot_analog_video_initial_status == ESP_OK && boot_crosshair_status != ESP_OK) {
         boot_analog_video_initial_status = boot_crosshair_status;
+    }
+    if (boot_analog_video_initial_status == ESP_OK) {
+        boot_analog_video_initial_status = Mini2_set_crosshair_position(
+            &cam, crosshair_positions.x[stored.active_preset],
+            crosshair_positions.y[stored.active_preset]);
     }
     if (boot_analog_video_initial_status == ESP_OK &&
         (image_controls.spatial_mask & (1U << stored.active_preset)))

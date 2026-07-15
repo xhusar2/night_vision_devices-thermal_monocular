@@ -20,8 +20,8 @@
     "\"auto_shutter_en\": %u, " \
     "\"flip_mode\": %u, " \
     "\"zoom\": %u, " \
-    "\"zoom_x\": %u, " \
-    "\"zoom_y\": %u, " \
+    "\"crosshair_x\": %u, " \
+    "\"crosshair_y\": %u, " \
     "\"av_format\": %u, " \
     "\"sensor_width\": %u, " \
     "\"sensor_height\": %u, " \
@@ -45,6 +45,13 @@ static inline bool control_point_zoom_is_valid(int x, int y, int zoom,
     }
 
     return x >= 0 && x < sensor_width && y >= 0 && y < sensor_height;
+}
+
+static inline bool control_crosshair_position_is_valid(int x, int y,
+                                                        uint16_t sensor_width,
+                                                        uint16_t sensor_height) {
+    return sensor_width != 0 && sensor_height != 0 &&
+           x >= 0 && x < sensor_width && y >= 0 && y < sensor_height;
 }
 
 static inline bool control_percent_is_valid(int value) {
