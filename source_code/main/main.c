@@ -25,6 +25,7 @@
 #define FIRMWARE_VERSION "0.4.7"
 #define BUTTON_DEBOUNCE_US (50 * 1000)
 #define BUTTON_LONG_PRESS_US (2 * 1000 * 1000)
+#define PERSIST_ATTEMPTS 3
 
 #define UART_TX GPIO_NUM_1
 #define UART_RX GPIO_NUM_2
@@ -100,6 +101,8 @@ static uint8_t crosshair_preset_mask = 0;
 static bool wifi_next_boot = false;
 static esp_err_t boot_analog_video_initial_status = ESP_ERR_INVALID_STATE;
 static volatile uint8_t last_applied_preset;
+static bool camera_state_authoritative = true;
+static esp_err_t camera_state_status = ESP_OK;
 
 static bool preset_crosshair_enabled(uint8_t preset) {
     return (crosshair_preset_mask & (1U << preset)) != 0;
@@ -122,6 +125,15 @@ static esp_err_t commit_settings(void) {
         err = nvs_set_u8(flash_handle, "wifi_next", wifi_next_boot);
     }
     return err == ESP_OK ? nvs_commit(flash_handle) : err;
+}
+
+static int persist_settings(void *context) {
+    (void)context;
+    return commit_settings();
+}
+
+static esp_err_t commit_settings_with_retry(void) {
+    return control_retry_operation(NULL, persist_settings, PERSIST_ATTEMPTS);
 }
 
 static bool json_obj_has_key(const jparse_ctx_t *jctx, const char *key) {
@@ -187,10 +199,31 @@ static uint8_t next_preset(uint8_t current) {
 }
 
 static esp_err_t switch_preset(uint8_t preset) {
+    const uint8_t previous = stored.active_preset;
     esp_err_t err = apply_preset_with_crosshair(preset);
     if (err == ESP_OK) {
         stored.active_preset = preset;
+        camera_state_authoritative = true;
+        camera_state_status = ESP_OK;
+    } else {
+        esp_err_t rollback_err = apply_preset_with_crosshair(previous);
+        camera_state_authoritative = rollback_err == ESP_OK;
+        camera_state_status = rollback_err == ESP_OK ? err : rollback_err;
+        ESP_LOGE(TAG, "Preset %u apply failed (%s), rollback %s", preset,
+                 esp_err_to_name(err), rollback_err == ESP_OK ? "succeeded" : "failed");
     }
+    return err;
+}
+
+
+static esp_err_t rollback_preset(uint8_t preset) {
+    esp_err_t err = apply_preset_with_crosshair(preset);
+    if (err == ESP_OK) {
+        stored.active_preset = preset;
+        err = commit_settings_with_retry();
+    }
+    camera_state_authoritative = err == ESP_OK;
+    camera_state_status = err;
     return err;
 }
 
@@ -234,10 +267,18 @@ static void loop_task(void *pvParameters) {
             &button_state, gpio_get_level(MULTI_BTN) == 0, now,
             BUTTON_DEBOUNCE_US, BUTTON_LONG_PRESS_US);
         if (button_action == CONTROL_BUTTON_SHORT_PRESS) {
+            const uint8_t previous = stored.active_preset;
             const uint8_t preset = next_preset(stored.active_preset);
             esp_err_t button_err = switch_preset(preset);
             if (button_err == ESP_OK) {
-                button_err = commit_settings();
+                button_err = commit_settings_with_retry();
+                if (button_err != ESP_OK) {
+                    esp_err_t rollback_err = rollback_preset(previous);
+                    if (rollback_err != ESP_OK) {
+                        ESP_LOGE(TAG, "Short press rollback failed: %s",
+                                 esp_err_to_name(rollback_err));
+                    }
+                }
             }
             if (button_err != ESP_OK) {
                 ESP_LOGE(TAG, "Short press: unable to switch preset: %s",
@@ -247,11 +288,20 @@ static void loop_task(void *pvParameters) {
             const bool enabled = !preset_crosshair_enabled(stored.active_preset);
             if (Mini2_set_crosshair(&cam, enabled) == ESP_OK) {
                 set_preset_crosshair_enabled(stored.active_preset, enabled);
-                esp_err_t button_err = commit_settings();
+                esp_err_t button_err = commit_settings_with_retry();
                 if (button_err == ESP_OK) {
+                    camera_state_authoritative = true;
+                    camera_state_status = ESP_OK;
                     ESP_LOGI(TAG, "Long press: preset %u crosshair %s",
                              stored.active_preset, enabled ? "enabled" : "disabled");
                 } else {
+                    esp_err_t rollback_err = Mini2_set_crosshair(&cam, !enabled);
+                    set_preset_crosshair_enabled(stored.active_preset, !enabled);
+                    if (rollback_err == ESP_OK) {
+                        rollback_err = commit_settings_with_retry();
+                    }
+                    camera_state_authoritative = rollback_err == ESP_OK;
+                    camera_state_status = rollback_err == ESP_OK ? button_err : rollback_err;
                     ESP_LOGE(TAG, "Unable to persist long-press crosshair state: %s",
                              esp_err_to_name(button_err));
                 }
@@ -277,6 +327,10 @@ static void loop_task(void *pvParameters) {
 
 static esp_err_t post_handler(httpd_req_t *req) {
     int ret;
+
+    const stored_values_t previous_stored = stored;
+    const uint8_t previous_crosshair_mask = crosshair_preset_mask;
+    const bool previous_wifi_next_boot = wifi_next_boot;
 
     char* buf = (char*)malloc(req->content_len);
 
@@ -446,6 +500,14 @@ static esp_err_t post_handler(httpd_req_t *req) {
     if (ret == OS_SUCCESS) {
         if ((0 <= value) && (value < PRESET_COUNT)) {
             if (switch_preset(value) != ESP_OK) {
+                stored = previous_stored;
+                crosshair_preset_mask = previous_crosshair_mask;
+                wifi_next_boot = previous_wifi_next_boot;
+                esp_err_t rollback_err = apply_preset_with_crosshair(stored.active_preset);
+                camera_state_authoritative = rollback_err == ESP_OK;
+                if (rollback_err != ESP_OK) {
+                    camera_state_status = rollback_err;
+                }
                 json_parse_end(&jctx);
                 free(buf);
                 httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
@@ -472,8 +534,6 @@ static esp_err_t post_handler(httpd_req_t *req) {
         Mini2_parameters_save(&cam);
     }
 
-    httpd_resp_send_chunk(req, NULL, 0);
-    
     json_parse_end(&jctx);
     free(buf);
 
@@ -481,13 +541,28 @@ static esp_err_t post_handler(httpd_req_t *req) {
         stored.first_boot = false;
     }
 
-    esp_err_t err = commit_settings();
+    esp_err_t err = commit_settings_with_retry();
     if (err == ESP_OK) {
+        camera_state_authoritative = true;
+        camera_state_status = ESP_OK;
         ESP_LOGI(TAG, "Stored values in NVS");
     } else {
-        ESP_LOGE(TAG, "Unable to store values in NVS");
+        stored = previous_stored;
+        crosshair_preset_mask = previous_crosshair_mask;
+        wifi_next_boot = previous_wifi_next_boot;
+        esp_err_t rollback_err = apply_preset_with_crosshair(stored.active_preset);
+        if (rollback_err == ESP_OK) {
+            rollback_err = commit_settings_with_retry();
+        }
+        camera_state_authoritative = rollback_err == ESP_OK;
+        camera_state_status = rollback_err == ESP_OK ? err : rollback_err;
+        ESP_LOGE(TAG, "Unable to persist web changes (%s), rollback %s",
+                 esp_err_to_name(err), rollback_err == ESP_OK ? "succeeded" : "failed");
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                            "Unable to persist settings");
+        return ESP_OK;
     }
-    return ESP_OK;
+    return httpd_resp_send_chunk(req, NULL, 0);
 }
 
 static esp_err_t retireve_values(httpd_req_t *req) {
@@ -516,7 +591,9 @@ static esp_err_t retireve_values(httpd_req_t *req) {
         (uint8_t)wifi_next_boot,
         FIRMWARE_VERSION,
         boot_analog_video_initial_status == ESP_OK,
-        boot_analog_video_initial_status
+        boot_analog_video_initial_status,
+        (uint8_t)camera_state_authoritative,
+        camera_state_status
     );
 
     if (res <= 0 || (size_t)res >= sizeof(out_json)) {

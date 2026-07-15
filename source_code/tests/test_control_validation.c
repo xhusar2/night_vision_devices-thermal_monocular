@@ -13,6 +13,33 @@ typedef struct {
     int crosshair_calls;
 } transaction_fake_t;
 
+typedef struct {
+    int apply_result;
+    int persist_failures;
+    int rollback_result;
+    int apply_calls;
+    int persist_calls;
+    int rollback_calls;
+} state_transaction_fake_t;
+
+static int fake_apply(void *context) {
+    state_transaction_fake_t *fake = context;
+    fake->apply_calls++;
+    return fake->apply_result;
+}
+
+static int fake_persist(void *context) {
+    state_transaction_fake_t *fake = context;
+    fake->persist_calls++;
+    return fake->persist_calls <= fake->persist_failures ? -5 : 0;
+}
+
+static int fake_rollback(void *context) {
+    state_transaction_fake_t *fake = context;
+    fake->rollback_calls++;
+    return fake->rollback_result;
+}
+
 static int fake_apply_preset(void *context, uint8_t preset) {
     transaction_fake_t *fake = context;
     (void)preset;
@@ -80,6 +107,34 @@ int main(void) {
     assert(control_apply_preset_transaction(&transaction, 1, true,
         fake_apply_preset, fake_apply_crosshair) == -9);
     assert(transaction.preset_calls == 1 && transaction.crosshair_calls == 1);
+
+    state_transaction_fake_t state_transaction = {.apply_result = -7};
+    control_transaction_result_t state_result = control_run_transaction(
+        &state_transaction, fake_apply, fake_persist, fake_rollback, 3);
+    assert(state_result.result == -7 && state_result.authoritative);
+    assert(state_transaction.persist_calls == 0 && state_transaction.rollback_calls == 1);
+    state_transaction = (state_transaction_fake_t) {.apply_result = -7, .rollback_result = -8};
+    state_result = control_run_transaction(
+        &state_transaction, fake_apply, fake_persist, fake_rollback, 3);
+    assert(!state_result.authoritative && state_result.rollback_result == -8);
+    state_transaction = (state_transaction_fake_t) {.persist_failures = 2};
+    state_result = control_run_transaction(
+        &state_transaction, fake_apply, fake_persist, fake_rollback, 3);
+    assert(state_result.result == 0 && state_result.authoritative);
+    assert(state_transaction.persist_calls == 3 && state_transaction.rollback_calls == 0);
+    state_transaction = (state_transaction_fake_t) {.persist_failures = 3};
+    state_result = control_run_transaction(
+        &state_transaction, fake_apply, fake_persist, fake_rollback, 3);
+    assert(state_result.result == -5 && state_result.authoritative);
+    assert(state_transaction.persist_calls == 3 && state_transaction.rollback_calls == 1);
+    state_transaction = (state_transaction_fake_t) {.persist_failures = 3, .rollback_result = -9};
+    state_result = control_run_transaction(
+        &state_transaction, fake_apply, fake_persist, fake_rollback, 3);
+    assert(!state_result.authoritative && state_result.rollback_result == -9);
+    state_transaction = (state_transaction_fake_t) {0};
+    state_result = control_run_transaction(
+        &state_transaction, fake_apply, fake_persist, fake_rollback, 3);
+    assert(state_result.result == 0 && state_result.authoritative);
     transaction = (transaction_fake_t) {0};
     assert(control_apply_preset_transaction(&transaction, 1, true,
         fake_apply_preset, fake_apply_crosshair) == 0);
@@ -90,7 +145,7 @@ int main(void) {
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, "0.4.7",
-        UINT_MAX, INT_MIN);
+        UINT_MAX, INT_MIN, UINT_MAX, INT_MIN);
     assert(state_length > 0);
     assert((size_t)state_length < sizeof(state_json));
 

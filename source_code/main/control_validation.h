@@ -27,7 +27,9 @@
     "\"wifi_next_boot\": %u, " \
     "\"firmware_version\": \"%s\", " \
     "\"boot_analog_video_initial_ok\": %u, " \
-    "\"boot_analog_video_initial_status\": %d " \
+    "\"boot_analog_video_initial_status\": %d, " \
+    "\"camera_state_authoritative\": %u, " \
+    "\"camera_state_status\": %d " \
     "}"
 
 static inline bool control_point_zoom_is_valid(int x, int y, int zoom,
@@ -104,4 +106,41 @@ static inline int control_apply_preset_transaction(
         return result;
     }
     return apply_crosshair(context, crosshair_enabled);
+}
+
+typedef int (*control_operation_fn)(void *context);
+
+typedef struct {
+    int result;
+    int rollback_result;
+    bool authoritative;
+} control_transaction_result_t;
+
+static inline int control_retry_operation(void *context,
+                                          control_operation_fn operation,
+                                          unsigned attempts) {
+    int result = -1;
+    for (unsigned attempt = 0; attempt < attempts; attempt++) {
+        result = operation(context);
+        if (result == 0) {
+            break;
+        }
+    }
+    return result;
+}
+
+static inline control_transaction_result_t control_run_transaction(
+        void *context, control_operation_fn apply,
+        control_operation_fn persist, control_operation_fn rollback,
+        unsigned persist_attempts) {
+    control_transaction_result_t result = {0, 0, true};
+    result.result = apply(context);
+    if (result.result == 0) {
+        result.result = control_retry_operation(context, persist, persist_attempts);
+    }
+    if (result.result != 0) {
+        result.rollback_result = rollback(context);
+        result.authoritative = result.rollback_result == 0;
+    }
+    return result;
 }
