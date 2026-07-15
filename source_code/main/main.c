@@ -22,7 +22,7 @@
 #define SSID "THERMAL_MONOCULAR"
 #define PASSWORD "password123"
 #define PRESET_COUNT 3
-#define FIRMWARE_VERSION "0.4.1"
+#define FIRMWARE_VERSION "0.4.2"
 
 #define UART_TX GPIO_NUM_1
 #define UART_RX GPIO_NUM_2
@@ -98,8 +98,11 @@ stored_values_t stored = {
 static bool crosshair_enabled = false;
 static bool wifi_next_boot = false;
 static esp_err_t boot_analog_video_initial_status = ESP_ERR_INVALID_STATE;
-static esp_err_t boot_analog_video_opposite_status = ESP_ERR_INVALID_STATE;
-static esp_err_t boot_analog_video_restore_status = ESP_ERR_INVALID_STATE;
+static volatile esp_err_t boot_analog_video_opposite_status = ESP_ERR_INVALID_STATE;
+static volatile esp_err_t boot_analog_video_restore_status = ESP_ERR_INVALID_STATE;
+static volatile bool boot_analog_video_pending = true;
+static enum AnalogVideoFormat boot_analog_video_format;
+static volatile uint8_t last_applied_preset;
 
 static esp_err_t commit_settings(void) {
     esp_err_t err = nvs_set_blob(flash_handle, "stored_values", &stored, sizeof(stored));
@@ -135,6 +138,28 @@ Mini2_t cam = {
     .variant = Mini2_256
 };
 
+static void apply_preset_with_crosshair(uint8_t preset) {
+    Mini2_apply_preset(&cam, &stored.presets[preset], &stored.alignment, true);
+    Mini2_set_crosshair(&cam, crosshair_enabled);
+    last_applied_preset = preset;
+}
+
+static void boot_analog_video_task(void *pvParameters) {
+    (void)pvParameters;
+    vTaskDelay(pdMS_TO_TICKS(5000));
+
+    const enum AnalogVideoFormat opposite_format = boot_analog_video_format == PAL ? NTSC : PAL;
+    boot_analog_video_opposite_status = Mini2_set_analog_video_format(&cam, opposite_format);
+    ESP_LOGI(TAG, "Boot analog video opposite format: %s", esp_err_to_name(boot_analog_video_opposite_status));
+
+    // The camera needs a full second to apply the temporary format before it is restored.
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    boot_analog_video_restore_status = Mini2_set_analog_video_format(&cam, boot_analog_video_format);
+    ESP_LOGI(TAG, "Boot analog video stored format restore: %s", esp_err_to_name(boot_analog_video_restore_status));
+    boot_analog_video_pending = false;
+    vTaskDelete(NULL);
+}
+
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     if (event_id == WIFI_EVENT_AP_STACONNECTED) {
         wifi_event_ap_staconnected_t* event = (wifi_event_ap_staconnected_t*) event_data;
@@ -165,8 +190,6 @@ static void loop_task(void *pvParameters) {
     vTaskDelay(pdMS_TO_TICKS(2000));
 
     int max_gain = 0;
-
-    uint8_t last_seen_preset = 255;
 
     adc_unit_t unit;
     adc_channel_t channel;
@@ -202,9 +225,8 @@ static void loop_task(void *pvParameters) {
             max_gain = (int)new_brightness;
             Mini2_set_brightness(&cam, max_gain);
         }
-        if (stored.active_preset != last_seen_preset) {
-            Mini2_apply_preset(&cam, &stored.presets[stored.active_preset], &stored.alignment, true);
-            last_seen_preset = stored.active_preset;
+        if (stored.active_preset != last_applied_preset) {
+            apply_preset_with_crosshair(stored.active_preset);
             esp_err_t err = commit_settings();
             if (err == ESP_OK) {
                 ESP_LOGI(TAG, "Stored values in NVS");
@@ -381,7 +403,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
     if (ret == OS_SUCCESS) {
         if ((0 <= value) && (value < PRESET_COUNT)) {
             stored.active_preset = value;
-            Mini2_apply_preset(&cam, &stored.presets[stored.active_preset], &stored.alignment, true);
+            apply_preset_with_crosshair(stored.active_preset);
         } else {
             ESP_LOGE(TAG, "Active profile number would be out-of-bounds!");
         }   
@@ -447,6 +469,7 @@ static esp_err_t retireve_values(httpd_req_t *req) {
         FIRMWARE_VERSION,
         boot_analog_video_initial_status == ESP_OK,
         boot_analog_video_initial_status,
+        (uint8_t)boot_analog_video_pending,
         boot_analog_video_opposite_status == ESP_OK,
         boot_analog_video_opposite_status,
         boot_analog_video_restore_status == ESP_OK,
@@ -564,19 +587,12 @@ void app_main(void) {
     Mini2_init(&cam);
 
     boot_analog_video_initial_status = Mini2_apply_preset(&cam, &stored.presets[stored.active_preset], &stored.alignment, false);
+    last_applied_preset = stored.active_preset;
     if (boot_analog_video_initial_status == ESP_OK) {
         ESP_LOGI(TAG, "Boot analog video initialization succeeded");
     } else {
         ESP_LOGE(TAG, "Boot analog video initialization failed: %s", esp_err_to_name(boot_analog_video_initial_status));
     }
-    const enum AnalogVideoFormat opposite_format = stored.alignment.av_format == PAL ? NTSC : PAL;
-    boot_analog_video_opposite_status = Mini2_set_analog_video_format(&cam, opposite_format);
-    ESP_LOGI(TAG, "Boot analog video opposite format: %s", esp_err_to_name(boot_analog_video_opposite_status));
-    // Give the camera time to activate the changed analog output before restoring the saved format.
-    vTaskDelay(pdMS_TO_TICKS(100));
-    boot_analog_video_restore_status = Mini2_set_analog_video_format(&cam, stored.alignment.av_format);
-    ESP_LOGI(TAG, "Boot analog video stored format restore: %s", esp_err_to_name(boot_analog_video_restore_status));
-
     xTaskCreate(loop_task, "loop task", 16384, NULL, 5, NULL);
 
     if (wifi_en) {
@@ -591,6 +607,14 @@ void app_main(void) {
             httpd_register_uri_handler(server, &index_uri);
             httpd_register_uri_handler(server, &retireve_values_route);
         }
+    }
+
+    boot_analog_video_format = stored.alignment.av_format;
+    if (xTaskCreate(boot_analog_video_task, "boot video", 3072, NULL, 5, NULL) != pdPASS) {
+        boot_analog_video_pending = false;
+        boot_analog_video_opposite_status = ESP_ERR_NO_MEM;
+        boot_analog_video_restore_status = ESP_ERR_NO_MEM;
+        ESP_LOGE(TAG, "Unable to create boot analog video recovery task");
     }
 
     button_debouce = esp_timer_get_time();

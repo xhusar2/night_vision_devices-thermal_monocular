@@ -28,6 +28,7 @@
     "\"firmware_version\": \"%s\", " \
     "\"boot_analog_video_initial_ok\": %u, " \
     "\"boot_analog_video_initial_status\": %d, " \
+    "\"boot_analog_video_pending\": %u, " \
     "\"boot_analog_video_opposite_ok\": %u, " \
     "\"boot_analog_video_opposite_status\": %d, " \
     "\"boot_analog_video_restore_ok\": %u, " \
