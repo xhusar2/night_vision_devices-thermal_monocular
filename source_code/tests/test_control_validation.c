@@ -90,6 +90,8 @@ int main(void) {
     assert(control_first_error(0, 0) == 0);
     assert(control_first_error(0, -3) == -3);
     assert(control_first_error(-3, -4) == -3);
+    assert(!control_rollback_required(false));
+    assert(control_rollback_required(true));
 
     control_button_state_t button;
     control_button_init(&button, false, 0);
@@ -181,6 +183,8 @@ int main(void) {
     assert(strstr(main_source, "set_preset_crosshair_enabled(stored.active_preset, enabled)") != NULL);
     assert(strstr(main_source, "control_apply_preset_transaction") != NULL);
     assert(strstr(main_source, "goto uart_failure") != NULL);
+    assert(strstr(main_source, "bool device_mutated = false") != NULL);
+    assert(strstr(main_source, "if (control_rollback_required(device_mutated))") != NULL);
     const char *restore = strstr(main_source, "static esp_err_t restore_camera_snapshot");
     assert(restore != NULL);
     const char *restore_palette = strstr(restore, "Mini2_set_color_pallet");

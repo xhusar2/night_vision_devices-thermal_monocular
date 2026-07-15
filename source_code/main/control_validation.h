@@ -66,6 +66,10 @@ static inline int control_first_error(int current_result, int next_result) {
     return current_result == 0 ? next_result : current_result;
 }
 
+static inline bool control_rollback_required(bool device_mutated) {
+    return device_mutated;
+}
+
 typedef enum {
     CONTROL_BUTTON_NONE,
     CONTROL_BUTTON_SHORT_PRESS,

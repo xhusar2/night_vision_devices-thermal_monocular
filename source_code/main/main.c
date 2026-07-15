@@ -359,6 +359,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
     int ret;
     esp_err_t request_err = ESP_OK;
     const char *request_error_message = "Unable to apply setting";
+    bool device_mutated = false;
 
     const stored_values_t previous_stored = stored;
     const uint8_t previous_crosshair_mask = crosshair_preset_mask;
@@ -393,6 +394,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
         }
         request_err = Mini2_set_color_pallet(&cam, (enum PseudoColor)value);
         if (request_err != ESP_OK) goto uart_failure;
+        device_mutated = true;
         request_err = Mini2_set_flip_mode(&cam, stored.alignment.flip_mode);
         if (request_err != ESP_OK) goto uart_failure;
         stored.presets[stored.active_preset].pseudo_color = (enum PseudoColor)value;
@@ -406,6 +408,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
         }
         request_err = Mini2_set_scene_mode(&cam, (enum SceneMode)value);
         if (request_err != ESP_OK) goto uart_failure;
+        device_mutated = true;
         request_err = Mini2_set_flip_mode(&cam, stored.alignment.flip_mode);
         if (request_err != ESP_OK) goto uart_failure;
         stored.presets[stored.active_preset].scene_mode = (enum SceneMode)value;
@@ -419,6 +422,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
         }
         request_err = Mini2_set_flip_mode(&cam, (enum FlipMode)value);
         if (request_err != ESP_OK) goto uart_failure;
+        device_mutated = true;
         stored.alignment.flip_mode = (enum FlipMode)value;
     }
     ret = json_obj_get_int(&jctx, "av_format", &value);
@@ -430,6 +434,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
         }
         request_err = Mini2_set_analog_video_format(&cam, (enum AnalogVideoFormat)value);
         if (request_err != ESP_OK) goto uart_failure;
+        device_mutated = true;
         stored.alignment.av_format = (enum AnalogVideoFormat)value;
     }
     /* Brightness is done via Poti, so no need
@@ -448,6 +453,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
         }
         request_err = Mini2_set_contrast(&cam, value);
         if (request_err != ESP_OK) goto uart_failure;
+        device_mutated = true;
         stored.presets[stored.active_preset].contrast = value;
     }
     ret = json_obj_get_int(&jctx, "edge_enhancment_gear", &value);
@@ -459,6 +465,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
         }
         request_err = Mini2_set_edge_enhancment(&cam, value);
         if (request_err != ESP_OK) goto uart_failure;
+        device_mutated = true;
         stored.presets[stored.active_preset].edge_enhancment_gear = value;
     }
     ret = json_obj_get_int(&jctx, "detail_enhancement_gear", &value);
@@ -470,6 +477,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
         }
         request_err = Mini2_set_detail_enhancement(&cam, value);
         if (request_err != ESP_OK) goto uart_failure;
+        device_mutated = true;
         stored.presets[stored.active_preset].detail_enhancement_gear = value;
     }
 
@@ -478,12 +486,14 @@ static esp_err_t post_handler(httpd_req_t *req) {
     if (ret == OS_SUCCESS) {
         request_err = Mini2_set_burn_protection(&cam, bool_val);
         if (request_err != ESP_OK) goto uart_failure;
+        device_mutated = true;
         stored.presets[stored.active_preset].burn_protection_en = bool_val;
     }
     ret = json_obj_get_bool(&jctx, "auto_shutter_en", &bool_val);
     if (ret == OS_SUCCESS) {
         request_err = Mini2_set_auto_shutter(&cam, bool_val);
         if (request_err != ESP_OK) goto uart_failure;
+        device_mutated = true;
         stored.presets[stored.active_preset].auto_shutter_en = bool_val;
     }
 
@@ -530,6 +540,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
             json_obj_leave_object(&jctx);
             goto uart_failure;
         }
+        device_mutated = true;
         stored.alignment.zoom = zoom;
         stored.alignment.zoom_x = x;
         stored.alignment.zoom_y = y;
@@ -546,6 +557,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
     if (has_crosshair_enabled) {
         request_err = Mini2_set_crosshair(&cam, bool_val);
         if (request_err != ESP_OK) goto uart_failure;
+        device_mutated = true;
         set_preset_crosshair_enabled(stored.active_preset, bool_val);
     }
 
@@ -562,6 +574,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
                 request_error_message = "Unable to switch active profile";
                 goto uart_failure;
             }
+            device_mutated = true;
         } else {
             ESP_LOGE(TAG, "Active profile number would be out-of-bounds!");
         }   
@@ -596,14 +609,16 @@ static esp_err_t post_handler(httpd_req_t *req) {
         stored = previous_stored;
         crosshair_preset_mask = previous_crosshair_mask;
         wifi_next_boot = previous_wifi_next_boot;
-        esp_err_t rollback_err = restore_camera_snapshot(&stored, crosshair_preset_mask);
-        if (rollback_err == ESP_OK) {
-            rollback_err = commit_settings_with_retry();
+        esp_err_t rollback_err = ESP_OK;
+        if (control_rollback_required(device_mutated)) {
+            rollback_err = restore_camera_snapshot(&stored, crosshair_preset_mask);
+            camera_state_authoritative = rollback_err == ESP_OK;
+            camera_state_status = rollback_err == ESP_OK ? err : rollback_err;
         }
-        camera_state_authoritative = rollback_err == ESP_OK;
-        camera_state_status = rollback_err == ESP_OK ? err : rollback_err;
+        esp_err_t rollback_commit_err = commit_settings_with_retry();
         ESP_LOGE(TAG, "Unable to persist web changes (%s), rollback %s",
-                 esp_err_to_name(err), rollback_err == ESP_OK ? "succeeded" : "failed");
+                 esp_err_to_name(err),
+                 rollback_err == ESP_OK && rollback_commit_err == ESP_OK ? "succeeded" : "failed");
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
                             "Unable to persist settings");
         return ESP_OK;
@@ -614,7 +629,7 @@ uart_failure:
     stored = previous_stored;
     crosshair_preset_mask = previous_crosshair_mask;
     wifi_next_boot = previous_wifi_next_boot;
-    {
+    if (control_rollback_required(device_mutated)) {
         esp_err_t rollback_err = restore_camera_snapshot(&stored, crosshair_preset_mask);
         camera_state_authoritative = rollback_err == ESP_OK;
         camera_state_status = rollback_err == ESP_OK ? request_err : rollback_err;
@@ -630,7 +645,7 @@ invalid_request:
     stored = previous_stored;
     crosshair_preset_mask = previous_crosshair_mask;
     wifi_next_boot = previous_wifi_next_boot;
-    {
+    if (control_rollback_required(device_mutated)) {
         esp_err_t rollback_err = restore_camera_snapshot(&stored, crosshair_preset_mask);
         camera_state_authoritative = rollback_err == ESP_OK;
         camera_state_status = rollback_err == ESP_OK ? request_err : rollback_err;
