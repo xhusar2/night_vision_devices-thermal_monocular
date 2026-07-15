@@ -516,10 +516,8 @@
         for (const key in data) {
           if (key === "sensor_width") {
             sensor_width = data[key];
-            updateZoomLimits();
           } else if (key === "sensor_height") {
             sensor_height = data[key];
-            updateZoomLimits();
           } else if (key === "zoom_x") {
             document.getElementById("zoom_x").value = data[key];
           } else if (key === "zoom_y") {
@@ -556,6 +554,7 @@
             if (element.type === "range") showRangeValue(element);
           }
         }
+        updateZoomLimits();
       })
       .catch(error => {
         setStatus(error.message, true);

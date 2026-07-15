@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "esp_wifi.h"
 #include "esp_mac.h"
 #include "esp_event.h"
@@ -94,6 +95,22 @@ stored_values_t stored = {
 };
 
 static bool crosshair_enabled = false;
+
+static bool json_obj_has_key(const jparse_ctx_t *jctx, const char *key) {
+    const int object_index = jctx->cur - jctx->tokens;
+    const size_t key_length = strlen(key);
+
+    for (int i = object_index + 1; i < jctx->num_tokens; i++) {
+        const json_tok_t *token = &jctx->tokens[i];
+        if (token->parent == object_index && token->type == JSMN_STRING &&
+            (size_t)(token->end - token->start) == key_length &&
+            strncmp(jctx->js + token->start, key, key_length) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 Mini2_t cam = {
     .uart_port = UART_NUM_1, // C3 only has num0 and num1, and num0 is used for debug / USB_CDC
@@ -288,28 +305,47 @@ static esp_err_t post_handler(httpd_req_t *req) {
         }
     }
 
+    const bool has_zoom = json_obj_has_key(&jctx, "zoom");
     ret = json_obj_get_object(&jctx, "zoom");
-    if (ret == OS_SUCCESS) {
+    if (has_zoom && ret != OS_SUCCESS) {
+        json_parse_end(&jctx);
+        free(buf);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid zoom object");
+        return ESP_OK;
+    }
+    if (has_zoom) {
         int x, y, zoom;
-        if (json_obj_get_int(&jctx, "x", &x) == OS_SUCCESS && json_obj_get_int(&jctx, "y", &y) == OS_SUCCESS && json_obj_get_int(&jctx, "zoom", &zoom) == OS_SUCCESS) {
-            if (!control_point_zoom_is_valid(x, y, zoom, cam.variant.sensor_width, cam.variant.sensor_height)) {
-                json_obj_leave_object(&jctx);
-                json_parse_end(&jctx);
-                free(buf);
-                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid zoom coordinates");
-                return ESP_OK;
-            }
-            if (Mini2_set_point_zoom(&cam, (uint16_t)x, (uint16_t)y, (uint8_t)zoom) == ESP_OK) {
-                stored.alignment.zoom = zoom;
-                stored.alignment.zoom_x = x;
-                stored.alignment.zoom_y = y;
-            }
+        if (json_obj_get_int(&jctx, "x", &x) != OS_SUCCESS ||
+            json_obj_get_int(&jctx, "y", &y) != OS_SUCCESS ||
+            json_obj_get_int(&jctx, "zoom", &zoom) != OS_SUCCESS ||
+            !control_point_zoom_is_valid(x, y, zoom, cam.variant.sensor_width, cam.variant.sensor_height)) {
+            json_obj_leave_object(&jctx);
+            json_parse_end(&jctx);
+            free(buf);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid zoom coordinates");
+            return ESP_OK;
         }
+        if (Mini2_set_point_zoom(&cam, (uint16_t)x, (uint16_t)y, (uint8_t)zoom) != ESP_OK) {
+            json_obj_leave_object(&jctx);
+            json_parse_end(&jctx);
+            free(buf);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Unable to set zoom");
+            return ESP_OK;
+        }
+        stored.alignment.zoom = zoom;
+        stored.alignment.zoom_x = x;
+        stored.alignment.zoom_y = y;
         json_obj_leave_object(&jctx);
     }
 
     ret = json_obj_get_bool(&jctx, "crosshair_enabled", &bool_val);
-    if (ret == OS_SUCCESS && Mini2_set_crosshair(&cam, bool_val) == ESP_OK) {
+    if (ret == OS_SUCCESS) {
+        if (Mini2_set_crosshair(&cam, bool_val) != ESP_OK) {
+            json_parse_end(&jctx);
+            free(buf);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Unable to set crosshair");
+            return ESP_OK;
+        }
         crosshair_enabled = bool_val;
     }
 
