@@ -417,7 +417,7 @@
             <span class="slider"></span>
           </label>
         </div>
-        <p class="hint">The native crosshair has no position command. X/Y shifts the thermal image beneath the fixed native overlay, including at true 1.0×.</p>
+        <p class="hint">The native crosshair has no position command. X/Y uses a small image crop beneath the fixed overlay; aim zoom must be at least 1.1×.</p>
       </div>
       <div>
         <label for="wifi_next_boot">Wi-Fi on next boot</label>
@@ -425,10 +425,10 @@
         <p class="hint">One shot: this flag is cleared when the next boot enables Wi-Fi.</p>
       </div>
       <div id="zoom_div" class="aim-control">
-        <label for="zoom">Zoom</label>
+        <label for="aim_zoom">Aim crop zoom</label>
         <div class="range-control">
-          <input class="zoom_slider" type="range" id="zoom" min="10" max="15" value="10" oninput="showRangeValue(this)" onchange="updateZoom()">
-          <output id="zoom_value">1.0×</output>
+          <input class="zoom_slider" type="range" id="aim_zoom" min="11" max="15" value="11" oninput="showRangeValue(this)" onchange="updateZoom()">
+          <output id="aim_zoom_value">1.1×</output>
         </div>
       </div>
       <div class="aim-control">
@@ -477,7 +477,7 @@
     function showRangeValue(input) {
       const output = document.getElementById(`${input.id}_value`);
       if (output === null) return;
-      output.textContent = input.id === "zoom"
+      output.textContent = input.id === "aim_zoom"
         ? `${(parseInt(input.value, 10) / 10).toFixed(1)}×`
         : input.value;
     }
@@ -489,7 +489,7 @@
     }
 
     function updateZoomLimits() {
-      const zoom = document.getElementById("zoom");
+      const zoom = document.getElementById("aim_zoom");
       const zoom_x = document.getElementById("zoom_x");
       const zoom_y = document.getElementById("zoom_y");
 
@@ -514,7 +514,7 @@
     function updateZoom() {
       updateZoomLimits();
 
-      const zoom = parseInt(document.getElementById("zoom").value, 10);
+      const zoom = parseInt(document.getElementById("aim_zoom").value, 10);
       const zoom_x = parseInt(document.getElementById("zoom_x").value, 10);
       const zoom_y = parseInt(document.getElementById("zoom_y").value, 10);
       setStatus("Saving…");
@@ -589,7 +589,7 @@
           } else if (key === "zoom_y") {
             document.getElementById("zoom_y").value = data[key];
           } else if (key === "zoom") {
-            document.getElementById("zoom").value = data[key];
+            document.getElementById("aim_zoom").value = Math.max(11, data[key]);
           } else if (key === "auto_shutter_en" || key === "burn_protection_en" || key === "preset_en" || key === "refresh_flip_mode" || key === "crosshair_enabled" || key === "wifi_next_boot") {
             const checkbox = document.getElementById(key);
             if (checkbox !== null) {

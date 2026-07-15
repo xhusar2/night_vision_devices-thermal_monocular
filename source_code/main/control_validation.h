@@ -33,7 +33,7 @@
 static inline bool control_point_zoom_is_valid(int x, int y, int zoom,
                                                 uint16_t sensor_width,
                                                 uint16_t sensor_height) {
-    if (sensor_width == 0 || sensor_height == 0 || zoom < 10 || zoom > 80) {
+    if (sensor_width == 0 || sensor_height == 0 || zoom < 11 || zoom > 80) {
         return false;
     }
 
