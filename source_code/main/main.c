@@ -22,7 +22,7 @@
 #define SSID "THERMAL_MONOCULAR"
 #define PASSWORD "password123"
 #define PRESET_COUNT 3
-#define FIRMWARE_VERSION "0.4.4"
+#define FIRMWARE_VERSION "0.4.5"
 
 #define UART_TX GPIO_NUM_1
 #define UART_RX GPIO_NUM_2
@@ -557,18 +557,17 @@ void app_main(void) {
         ESP_ERROR_CHECK(esp_wifi_start());
     }
 
+    ESP_LOGI(TAG, "Waiting 5000 ms before Mini2 UART initialization");
+    vTaskDelay(pdMS_TO_TICKS(5000));
     Mini2_init(&cam);
-    ESP_LOGI(TAG, "Mini2 UART initialized at %lld ms; waiting 7000 ms for camera readiness",
-             esp_timer_get_time() / 1000);
-    vTaskDelay(pdMS_TO_TICKS(7000));
-    ESP_LOGI(TAG, "Camera readiness delay completed at %lld ms", esp_timer_get_time() / 1000);
+    ESP_LOGI(TAG, "Mini2 UART initialized at %lld ms", esp_timer_get_time() / 1000);
 
     boot_analog_video_initial_status = Mini2_apply_preset(&cam, &stored.presets[stored.active_preset], &stored.alignment, false);
     last_applied_preset = stored.active_preset;
     if (boot_analog_video_initial_status == ESP_OK) {
-        ESP_LOGI(TAG, "Boot analog video initialization succeeded");
+        ESP_LOGI(TAG, "Boot video save/apply initialization succeeded");
     } else {
-        ESP_LOGE(TAG, "Boot analog video initialization failed: %s", esp_err_to_name(boot_analog_video_initial_status));
+        ESP_LOGE(TAG, "Boot video save/apply initialization failed: %s", esp_err_to_name(boot_analog_video_initial_status));
     }
     xTaskCreate(loop_task, "loop task", 16384, NULL, 5, NULL);
 

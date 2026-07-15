@@ -272,16 +272,19 @@ esp_err_t Mini2_apply_preset(Mini2_t* cam, value_preset_t* preset, alignment_pre
     
     if (!seem_less) {
         format_read_err = Mini2_get_analog_video_format(cam, &format);
-        esp_err_t digital_err = Mini2_set_digital_video_format(cam, true, UsbProgressive, Hz50);
-        ESP_LOGI(Mini2_TAG, "Boot video digital enable at %lld ms: %s",
-                 esp_timer_get_time() / 1000, esp_err_to_name(digital_err));
-        if (err == ESP_OK && digital_err != ESP_OK) err = digital_err;
-        esp_err_t analog_video_err = Mini2_set_analog_video_format(cam, alignment->av_format);
-        ESP_LOGI(Mini2_TAG, "Boot video analog format at %lld ms: %s",
-                 esp_timer_get_time() / 1000, esp_err_to_name(analog_video_err));
-        if (err == ESP_OK && analog_video_err != ESP_OK) err = analog_video_err;
-        if (format_read_err == ESP_OK && format != alignment->av_format && analog_video_err == ESP_OK) {
-            RECORD_COMMAND(Mini2_save_video(cam));
+        if (format_read_err != ESP_OK || format != alignment->av_format) {
+            esp_err_t digital_err = Mini2_set_digital_video_format(cam, true, UsbProgressive, Hz50);
+            ESP_LOGI(Mini2_TAG, "Boot video digital enable at %lld ms: %s",
+                     esp_timer_get_time() / 1000, esp_err_to_name(digital_err));
+            if (err == ESP_OK && digital_err != ESP_OK) err = digital_err;
+            esp_err_t analog_video_err = Mini2_set_analog_video_format(cam, alignment->av_format);
+            ESP_LOGI(Mini2_TAG, "Boot video analog format at %lld ms: %s",
+                     esp_timer_get_time() / 1000, esp_err_to_name(analog_video_err));
+            if (err == ESP_OK && analog_video_err != ESP_OK) err = analog_video_err;
+            esp_err_t save_video_err = Mini2_save_video(cam);
+            ESP_LOGI(Mini2_TAG, "Boot video save/apply at %lld ms: %s",
+                     esp_timer_get_time() / 1000, esp_err_to_name(save_video_err));
+            if (err == ESP_OK && save_video_err != ESP_OK) err = save_video_err;
         }
     }
 
@@ -307,13 +310,6 @@ esp_err_t Mini2_apply_preset(Mini2_t* cam, value_preset_t* preset, alignment_pre
             RECORD_COMMAND(Mini2_set_flip_mode(cam, alignment->flip_mode));
         }
         vTaskDelay(pdMS_TO_TICKS(50));
-    }
-
-    if (!seem_less) {
-        esp_err_t nuc_err = Mini2_NUC(cam);
-        ESP_LOGI(Mini2_TAG, "Boot NUC at %lld ms: %s",
-                 esp_timer_get_time() / 1000, esp_err_to_name(nuc_err));
-        if (err == ESP_OK && nuc_err != ESP_OK) err = nuc_err;
     }
 
     #undef RECORD_COMMAND

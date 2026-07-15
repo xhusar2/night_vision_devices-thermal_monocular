@@ -36,19 +36,20 @@ int main(void) {
     int state_length = snprintf(state_json, sizeof(state_json), CONTROL_STATE_JSON_FORMAT,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
-        UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, "0.4.4",
+        UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, "0.4.5",
         UINT_MAX, INT_MIN);
     assert(state_length > 0);
     assert((size_t)state_length < sizeof(state_json));
 
     char *main_source = read_text("main/main.c");
     assert(strstr(main_source, "boot_analog_video_task") == NULL);
-    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.4\"") != NULL);
+    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.5\"") != NULL);
     const char *uart_init = strstr(main_source, "Mini2_init(&cam)");
     assert(uart_init != NULL);
-    const char *ready_delay = strstr(uart_init, "vTaskDelay(pdMS_TO_TICKS(7000))");
+    const char *ready_delay = strstr(main_source, "vTaskDelay(pdMS_TO_TICKS(5000))");
     assert(ready_delay != NULL);
-    const char *cold_boot = strstr(ready_delay, "Mini2_apply_preset");
+    assert(ready_delay < uart_init);
+    const char *cold_boot = strstr(uart_init, "Mini2_apply_preset");
     assert(cold_boot != NULL);
     assert(strstr(main_source, "apply_preset_with_crosshair(stored.active_preset)") != NULL);
     free(main_source);
@@ -71,14 +72,15 @@ int main(void) {
     assert(apply != NULL);
     const char *digital = strstr(apply, "Mini2_set_digital_video_format(cam, true, UsbProgressive, Hz50)");
     const char *analog = strstr(apply, "Mini2_set_analog_video_format(cam, alignment->av_format)");
-    const char *nuc = strstr(apply, "Mini2_NUC(cam)");
+    const char *save = strstr(apply, "Mini2_save_video(cam)");
     const char *scene = strstr(apply, "Mini2_set_scene_mode");
-    assert(digital != NULL && analog != NULL && scene != NULL && nuc != NULL &&
-           digital < analog && analog < scene && scene < nuc);
+    assert(digital != NULL && analog != NULL && save != NULL && scene != NULL &&
+           digital < analog && analog < save && save < scene);
     assert(strstr(apply, "Boot video digital enable at %lld ms") != NULL);
     assert(strstr(apply, "Boot video analog format at %lld ms") != NULL);
-    assert(strstr(apply, "Boot NUC at %lld ms") != NULL);
-    assert(strstr(apply, "format_read_err == ESP_OK && format != alignment->av_format") != NULL);
+    assert(strstr(apply, "Boot video save/apply at %lld ms") != NULL);
+    assert(strstr(apply, "format_read_err != ESP_OK || format != alignment->av_format") != NULL);
+    assert(strstr(apply, "Mini2_NUC(cam)") == NULL);
     free(mini2);
     return 0;
 }
