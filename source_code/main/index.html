@@ -337,6 +337,24 @@
           <input type="range" id="detail_enhancement_gear" min="0" max="100" value="0" oninput="updateValue(this.id, this.value)">
         </div>
       </div>
+      <div><label for="spatial_noise_reduction">Spatial noise reduction</label><div class="range-control">
+        <button type="button" onclick="adjustImageLevel('spatial_noise_reduction', -10)">−10</button>
+        <input type="range" id="spatial_noise_reduction" min="0" max="100" step="10" value="0" onchange="updateValue(this.id, this.value)">
+        <button type="button" onclick="adjustImageLevel('spatial_noise_reduction', 10)">+10</button>
+        <output id="spatial_noise_reduction_value">Unset</output>
+      </div></div>
+      <div><label for="temporal_noise_reduction">Temporal noise reduction</label><div class="range-control">
+        <button type="button" onclick="adjustImageLevel('temporal_noise_reduction', -10)">−10</button>
+        <input type="range" id="temporal_noise_reduction" min="0" max="100" step="10" value="0" onchange="updateValue(this.id, this.value)">
+        <button type="button" onclick="adjustImageLevel('temporal_noise_reduction', 10)">+10</button>
+        <output id="temporal_noise_reduction_value">Unset</output>
+      </div></div>
+      <div><label for="gamma_intensity">Gamma intensity</label><div class="range-control">
+        <button type="button" onclick="adjustImageLevel('gamma_intensity', -10)">−10</button>
+        <input type="range" id="gamma_intensity" min="0" max="100" step="10" value="0" onchange="updateValue(this.id, this.value)">
+        <button type="button" onclick="adjustImageLevel('gamma_intensity', 10)">+10</button>
+        <output id="gamma_intensity_value">Unset</output>
+      </div><p class="hint">Unset preserves the camera default. Choosing a value saves it for this preset.</p></div>
       <!--
       <div id="fix_div">
         <label>Fixes</label>
@@ -521,6 +539,12 @@
       updateZoom();
     }
 
+    function adjustImageLevel(id, delta) {
+      const input = document.getElementById(id);
+      input.value = Math.min(100, Math.max(0, Number(input.value) + delta));
+      updateValue(id, input.value);
+    }
+
     function updateZoom() {
       updateZoomLimits();
 
@@ -632,6 +656,13 @@
           } else if (key === "active_profile") {
               const select = document.getElementById("active_profile");
               select.value = data[key];
+          } else if (key === "spatial_noise_reduction" || key === "temporal_noise_reduction" || key === "gamma_intensity") {
+            const element = document.getElementById(key);
+            const output = document.getElementById(`${key}_value`);
+            const configured = data[key] >= 0;
+            element.value = configured ? data[key] : 0;
+            element.dataset.configured = configured ? "true" : "false";
+            output.textContent = configured ? data[key] : "Unset";
           } else {
             if (key === "flip_mode") {
               setAimControlsVisible(data[key] === 0);

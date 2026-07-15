@@ -13,6 +13,9 @@
     "\"contrast\": %u, " \
     "\"edge_enhancment_gear\": %u, " \
     "\"detail_enhancement_gear\": %u, " \
+    "\"spatial_noise_reduction\": %d, " \
+    "\"temporal_noise_reduction\": %d, " \
+    "\"gamma_intensity\": %d, " \
     "\"burn_protection_en\": %u, " \
     "\"auto_shutter_en\": %u, " \
     "\"flip_mode\": %u, " \
@@ -46,6 +49,10 @@ static inline bool control_point_zoom_is_valid(int x, int y, int zoom,
 
 static inline bool control_percent_is_valid(int value) {
     return value >= 0 && value <= 100;
+}
+
+static inline bool control_image_level_is_valid(int value) {
+    return value >= 0 && value <= 100 && value % 10 == 0;
 }
 
 static inline bool control_edge_gear_is_valid(int value) {

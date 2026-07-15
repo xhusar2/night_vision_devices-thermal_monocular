@@ -180,6 +180,21 @@ esp_err_t Mini2_set_detail_enhancement(Mini2_t* cam, uint8_t gear) {
     return Mini2_write_command(cam, cmd, sizeof(cmd));
 }
 
+esp_err_t Mini2_set_spatial_noise_reduction(Mini2_t* cam, uint8_t value) {
+    uint8_t cmd[] = {0x10, 0x04, 0x4B, 0x00, value};
+    return Mini2_write_command(cam, cmd, sizeof(cmd));
+}
+
+esp_err_t Mini2_set_temporal_noise_reduction(Mini2_t* cam, uint8_t value) {
+    uint8_t cmd[] = {0x10, 0x04, 0x4C, 0x00, value};
+    return Mini2_write_command(cam, cmd, sizeof(cmd));
+}
+
+esp_err_t Mini2_set_gamma_intensity(Mini2_t* cam, uint8_t value) {
+    uint8_t cmd[] = {0x10, 0x04, 0x4D, 0x00, value};
+    return Mini2_write_command(cam, cmd, sizeof(cmd));
+}
+
 esp_err_t Mini2_set_burn_protection(Mini2_t* cam, bool enabled) {
     uint8_t cmd[] = {0x10, 0x03, 0x4B, 0x00, (uint8_t)enabled};
     return Mini2_write_command(cam, cmd, sizeof(cmd));

@@ -122,6 +122,11 @@ int main(void) {
     assert(control_apply_preset_transaction(&transaction, 1, true,
         fake_apply_preset, fake_apply_crosshair) == -9);
     assert(transaction.preset_calls == 1 && transaction.crosshair_calls == 1);
+    assert(control_image_level_is_valid(0));
+    assert(control_image_level_is_valid(100));
+    assert(!control_image_level_is_valid(-10));
+    assert(!control_image_level_is_valid(55));
+    assert(!control_image_level_is_valid(110));
 
     state_transaction_fake_t state_transaction = {.apply_result = -7};
     control_transaction_result_t state_result = control_run_transaction(
@@ -158,15 +163,16 @@ int main(void) {
     char state_json[CONTROL_STATE_JSON_BUFFER_SIZE];
     int state_length = snprintf(state_json, sizeof(state_json), CONTROL_STATE_JSON_FORMAT,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
-        UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
-        UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, "0.4.7",
+        INT_MIN, INT_MIN, INT_MIN, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
+        UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
+        UINT_MAX, UINT_MAX, UINT_MAX, "0.4.8",
         UINT_MAX, INT_MIN, UINT_MAX, INT_MIN, UINT_MAX, INT_MIN);
     assert(state_length > 0);
     assert((size_t)state_length < sizeof(state_json));
 
     char *main_source = read_text("main/main.c");
     assert(strstr(main_source, "boot_analog_video_task") == NULL);
-    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.7\"") != NULL);
+    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.8\"") != NULL);
     assert(strstr(main_source, "value < NTSC || value > PAL") != NULL);
     assert(strstr(main_source, "stored.alignment.av_format = (enum AnalogVideoFormat)value") != NULL);
     assert(strstr(main_source, "request_err = Mini2_set_analog_video_format") != NULL);

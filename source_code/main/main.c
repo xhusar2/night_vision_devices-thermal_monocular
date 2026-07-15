@@ -22,7 +22,7 @@
 #define SSID "THERMAL_MONOCULAR"
 #define PASSWORD "password123"
 #define PRESET_COUNT 3
-#define FIRMWARE_VERSION "0.4.7"
+#define FIRMWARE_VERSION "0.4.8"
 #define BUTTON_DEBOUNCE_US (50 * 1000)
 #define BUTTON_LONG_PRESS_US (2 * 1000 * 1000)
 #define PERSIST_ATTEMPTS 3
@@ -98,6 +98,15 @@ stored_values_t stored = {
 };
 
 static uint8_t crosshair_preset_mask = 0;
+typedef struct {
+    uint8_t spatial[PRESET_COUNT];
+    uint8_t temporal[PRESET_COUNT];
+    uint8_t gamma[PRESET_COUNT];
+    uint8_t spatial_mask;
+    uint8_t temporal_mask;
+    uint8_t gamma_mask;
+} image_controls_t;
+static image_controls_t image_controls;
 static bool wifi_next_boot = false;
 static esp_err_t boot_analog_video_initial_status = ESP_ERR_INVALID_STATE;
 static volatile uint8_t last_applied_preset;
@@ -125,6 +134,9 @@ static esp_err_t commit_settings(void) {
     }
     if (err == ESP_OK) {
         err = nvs_set_u8(flash_handle, "wifi_next", wifi_next_boot);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_blob(flash_handle, "image_controls", &image_controls, sizeof(image_controls));
     }
     return err == ESP_OK ? nvs_commit(flash_handle) : err;
 }
@@ -177,6 +189,13 @@ static esp_err_t apply_preset_with_crosshair(uint8_t preset) {
     if (err != ESP_OK) {
         return err;
     }
+    if (image_controls.spatial_mask & (1U << preset))
+        err = Mini2_set_spatial_noise_reduction(&cam, image_controls.spatial[preset]);
+    if (err == ESP_OK && (image_controls.temporal_mask & (1U << preset)))
+        err = Mini2_set_temporal_noise_reduction(&cam, image_controls.temporal[preset]);
+    if (err == ESP_OK && (image_controls.gamma_mask & (1U << preset)))
+        err = Mini2_set_gamma_intensity(&cam, image_controls.gamma[preset]);
+    if (err != ESP_OK) return err;
     last_applied_preset = preset;
     return ESP_OK;
 }
@@ -194,6 +213,12 @@ static esp_err_t restore_camera_snapshot(const stored_values_t *snapshot,
     err = control_first_error(err, Mini2_set_detail_enhancement(&cam, preset->detail_enhancement_gear));
     err = control_first_error(err, Mini2_set_burn_protection(&cam, preset->burn_protection_en));
     err = control_first_error(err, Mini2_set_auto_shutter(&cam, preset->auto_shutter_en));
+    if (image_controls.spatial_mask & (1U << preset_index))
+        err = control_first_error(err, Mini2_set_spatial_noise_reduction(&cam, image_controls.spatial[preset_index]));
+    if (image_controls.temporal_mask & (1U << preset_index))
+        err = control_first_error(err, Mini2_set_temporal_noise_reduction(&cam, image_controls.temporal[preset_index]));
+    if (image_controls.gamma_mask & (1U << preset_index))
+        err = control_first_error(err, Mini2_set_gamma_intensity(&cam, image_controls.gamma[preset_index]));
     err = control_first_error(err, Mini2_set_analog_video_format(&cam, snapshot->alignment.av_format));
     err = control_first_error(err, Mini2_set_flip_mode(&cam, snapshot->alignment.flip_mode));
     err = control_first_error(err, Mini2_set_point_zoom(
@@ -373,6 +398,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
 
     const stored_values_t previous_stored = stored;
     const uint8_t previous_crosshair_mask = crosshair_preset_mask;
+    const image_controls_t previous_image_controls = image_controls;
     const bool previous_wifi_next_boot = wifi_next_boot;
 
     char* buf = (char*)malloc(req->content_len);
@@ -490,6 +516,21 @@ static esp_err_t post_handler(httpd_req_t *req) {
         device_mutated = true;
         stored.presets[stored.active_preset].detail_enhancement_gear = value;
     }
+
+#define APPLY_IMAGE_CONTROL(key, member, mask, setter, message) \
+    ret = json_obj_get_int(&jctx, key, &value); \
+    if (ret == OS_SUCCESS) { \
+        if (!control_image_level_is_valid(value)) { request_err = ESP_ERR_INVALID_ARG; request_error_message = message; goto invalid_request; } \
+        request_err = setter(&cam, value); \
+        if (request_err != ESP_OK) goto uart_failure; \
+        device_mutated = true; \
+        image_controls.member[stored.active_preset] = value; \
+        image_controls.mask |= (1U << stored.active_preset); \
+    }
+    APPLY_IMAGE_CONTROL("spatial_noise_reduction", spatial, spatial_mask, Mini2_set_spatial_noise_reduction, "Invalid spatial noise reduction");
+    APPLY_IMAGE_CONTROL("temporal_noise_reduction", temporal, temporal_mask, Mini2_set_temporal_noise_reduction, "Invalid temporal noise reduction");
+    APPLY_IMAGE_CONTROL("gamma_intensity", gamma, gamma_mask, Mini2_set_gamma_intensity, "Invalid gamma intensity");
+#undef APPLY_IMAGE_CONTROL
 
     bool bool_val;
     ret = json_obj_get_bool(&jctx, "burn_protection_en", &bool_val);
@@ -620,6 +661,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
     } else {
         stored = previous_stored;
         crosshair_preset_mask = previous_crosshair_mask;
+        image_controls = previous_image_controls;
         wifi_next_boot = previous_wifi_next_boot;
         esp_err_t rollback_err = ESP_OK;
         if (control_rollback_required(device_mutated)) {
@@ -642,6 +684,7 @@ static esp_err_t post_handler(httpd_req_t *req) {
 uart_failure:
     stored = previous_stored;
     crosshair_preset_mask = previous_crosshair_mask;
+    image_controls = previous_image_controls;
     wifi_next_boot = previous_wifi_next_boot;
     if (control_rollback_required(device_mutated)) {
         esp_err_t rollback_err = restore_camera_snapshot(&stored, crosshair_preset_mask);
@@ -658,6 +701,7 @@ uart_failure:
 invalid_request:
     stored = previous_stored;
     crosshair_preset_mask = previous_crosshair_mask;
+    image_controls = previous_image_controls;
     wifi_next_boot = previous_wifi_next_boot;
     if (control_rollback_required(device_mutated)) {
         esp_err_t rollback_err = restore_camera_snapshot(&stored, crosshair_preset_mask);
@@ -682,6 +726,9 @@ static esp_err_t retireve_values(httpd_req_t *req) {
         stored.presets[stored.active_preset].contrast,
         stored.presets[stored.active_preset].edge_enhancment_gear,
         stored.presets[stored.active_preset].detail_enhancement_gear,
+        (image_controls.spatial_mask & (1U << stored.active_preset)) ? image_controls.spatial[stored.active_preset] : -1,
+        (image_controls.temporal_mask & (1U << stored.active_preset)) ? image_controls.temporal[stored.active_preset] : -1,
+        (image_controls.gamma_mask & (1U << stored.active_preset)) ? image_controls.gamma[stored.active_preset] : -1,
         (uint8_t)stored.presets[stored.active_preset].burn_protection_en,
         (uint8_t)stored.presets[stored.active_preset].auto_shutter_en,
         (uint8_t)stored.alignment.flip_mode,
@@ -761,6 +808,12 @@ void app_main(void) {
     } else if (nvs_get_u8(flash_handle, "crosshair_en", &persisted_value) == ESP_OK && persisted_value != 0) {
         crosshair_preset_mask = (1U << PRESET_COUNT) - 1U;
     }
+    size_t image_controls_len = sizeof(image_controls);
+    if (nvs_get_blob(flash_handle, "image_controls", &image_controls,
+                     &image_controls_len) != ESP_OK ||
+        image_controls_len != sizeof(image_controls)) {
+        memset(&image_controls, 0, sizeof(image_controls));
+    }
     persisted_value = 0;
     if (nvs_get_u8(flash_handle, "wifi_next", &persisted_value) == ESP_OK) {
         wifi_next_boot = persisted_value != 0;
@@ -821,6 +874,15 @@ void app_main(void) {
     if (boot_analog_video_initial_status == ESP_OK && boot_crosshair_status != ESP_OK) {
         boot_analog_video_initial_status = boot_crosshair_status;
     }
+    if (boot_analog_video_initial_status == ESP_OK &&
+        (image_controls.spatial_mask & (1U << stored.active_preset)))
+        boot_analog_video_initial_status = Mini2_set_spatial_noise_reduction(&cam, image_controls.spatial[stored.active_preset]);
+    if (boot_analog_video_initial_status == ESP_OK &&
+        (image_controls.temporal_mask & (1U << stored.active_preset)))
+        boot_analog_video_initial_status = Mini2_set_temporal_noise_reduction(&cam, image_controls.temporal[stored.active_preset]);
+    if (boot_analog_video_initial_status == ESP_OK &&
+        (image_controls.gamma_mask & (1U << stored.active_preset)))
+        boot_analog_video_initial_status = Mini2_set_gamma_intensity(&cam, image_controls.gamma[stored.active_preset]);
     last_applied_preset = stored.active_preset;
     if (boot_analog_video_initial_status == ESP_OK) {
         camera_state_authoritative = true;
