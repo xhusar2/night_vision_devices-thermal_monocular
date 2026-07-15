@@ -39,3 +39,69 @@ static inline bool control_point_zoom_is_valid(int x, int y, int zoom,
 
     return x >= 0 && x < sensor_width && y >= 0 && y < sensor_height;
 }
+
+typedef enum {
+    CONTROL_BUTTON_NONE,
+    CONTROL_BUTTON_SHORT_PRESS,
+    CONTROL_BUTTON_LONG_PRESS,
+} control_button_action_t;
+
+typedef struct {
+    bool observed_pressed;
+    bool accepted_pressed;
+    bool long_press_handled;
+    int64_t observed_since;
+    int64_t pressed_since;
+} control_button_state_t;
+
+static inline void control_button_init(control_button_state_t *state,
+                                       bool pressed, int64_t now) {
+    *state = (control_button_state_t) {
+        .observed_pressed = pressed,
+        .accepted_pressed = pressed,
+        .observed_since = now,
+        .pressed_since = now,
+    };
+}
+
+static inline control_button_action_t control_button_sample(
+        control_button_state_t *state, bool pressed, int64_t now,
+        int64_t debounce_us, int64_t long_press_us) {
+    if (pressed != state->observed_pressed) {
+        state->observed_pressed = pressed;
+        state->observed_since = now;
+    }
+
+    if (state->observed_pressed != state->accepted_pressed &&
+        now - state->observed_since >= debounce_us) {
+        state->accepted_pressed = state->observed_pressed;
+        if (state->accepted_pressed) {
+            state->pressed_since = state->observed_since;
+            state->long_press_handled = false;
+        } else if (!state->long_press_handled) {
+            return CONTROL_BUTTON_SHORT_PRESS;
+        }
+    }
+
+    if (state->accepted_pressed && !state->long_press_handled &&
+        now - state->pressed_since >= long_press_us) {
+        state->long_press_handled = true;
+        return CONTROL_BUTTON_LONG_PRESS;
+    }
+
+    return CONTROL_BUTTON_NONE;
+}
+
+typedef int (*control_apply_preset_fn)(void *context, uint8_t preset);
+typedef int (*control_apply_crosshair_fn)(void *context, bool enabled);
+
+static inline int control_apply_preset_transaction(
+        void *context, uint8_t preset, bool crosshair_enabled,
+        control_apply_preset_fn apply_preset,
+        control_apply_crosshair_fn apply_crosshair) {
+    int result = apply_preset(context, preset);
+    if (result != 0) {
+        return result;
+    }
+    return apply_crosshair(context, crosshair_enabled);
+}

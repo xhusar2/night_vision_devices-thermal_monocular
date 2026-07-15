@@ -6,6 +6,27 @@
 
 #include "control_validation.h"
 
+typedef struct {
+    int preset_result;
+    int crosshair_result;
+    int preset_calls;
+    int crosshair_calls;
+} transaction_fake_t;
+
+static int fake_apply_preset(void *context, uint8_t preset) {
+    transaction_fake_t *fake = context;
+    (void)preset;
+    fake->preset_calls++;
+    return fake->preset_result;
+}
+
+static int fake_apply_crosshair(void *context, bool enabled) {
+    transaction_fake_t *fake = context;
+    (void)enabled;
+    fake->crosshair_calls++;
+    return fake->crosshair_result;
+}
+
 static char *read_text(const char *path) {
     FILE *file = fopen(path, "rb");
     assert(file != NULL);
@@ -32,6 +53,38 @@ int main(void) {
     assert(!control_point_zoom_is_valid(128, 96, 81, 256, 192));
     assert(!control_point_zoom_is_valid(0, 0, 10, 0, 192));
 
+    control_button_state_t button;
+    control_button_init(&button, false, 0);
+    assert(control_button_sample(&button, true, 1000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, false, 20000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, true, 30000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, true, 79999, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, true, 80000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, false, 100000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, false, 150000, 50000, 2000000) == CONTROL_BUTTON_SHORT_PRESS);
+
+    control_button_init(&button, false, 0);
+    assert(control_button_sample(&button, true, 1000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, true, 51000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, true, 2000999, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, true, 2001000, 50000, 2000000) == CONTROL_BUTTON_LONG_PRESS);
+    assert(control_button_sample(&button, true, 3000000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, false, 3100000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, false, 3150000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+
+    transaction_fake_t transaction = {.preset_result = -7};
+    assert(control_apply_preset_transaction(&transaction, 1, true,
+        fake_apply_preset, fake_apply_crosshair) == -7);
+    assert(transaction.preset_calls == 1 && transaction.crosshair_calls == 0);
+    transaction = (transaction_fake_t) {.crosshair_result = -9};
+    assert(control_apply_preset_transaction(&transaction, 1, true,
+        fake_apply_preset, fake_apply_crosshair) == -9);
+    assert(transaction.preset_calls == 1 && transaction.crosshair_calls == 1);
+    transaction = (transaction_fake_t) {0};
+    assert(control_apply_preset_transaction(&transaction, 1, true,
+        fake_apply_preset, fake_apply_crosshair) == 0);
+    assert(transaction.preset_calls == 1 && transaction.crosshair_calls == 1);
+
     char state_json[CONTROL_STATE_JSON_BUFFER_SIZE];
     int state_length = snprintf(state_json, sizeof(state_json), CONTROL_STATE_JSON_FORMAT,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
@@ -54,15 +107,13 @@ int main(void) {
     assert(ready_delay < uart_init);
     const char *cold_boot = strstr(uart_init, "Mini2_apply_preset");
     assert(cold_boot != NULL);
-    assert(strstr(main_source, "apply_preset_with_crosshair(stored.active_preset)") != NULL);
+    assert(strstr(main_source, "switch_preset(preset)") != NULL);
     assert(strstr(main_source, "#define BUTTON_LONG_PRESS_US (2 * 1000 * 1000)") != NULL);
-    assert(strstr(main_source, ".intr_type = GPIO_INTR_ANYEDGE") != NULL);
-    assert(strstr(main_source, "button_edge_pending = true") != NULL);
-    assert(strstr(main_source, "else if (!long_press_handled)") != NULL);
-    assert(strstr(main_source, "now - button_pressed_at >= BUTTON_LONG_PRESS_US") != NULL);
-    assert(strstr(main_source, "long_press_handled = true") != NULL);
+    assert(strstr(main_source, ".intr_type = GPIO_INTR_DISABLE") != NULL);
+    assert(strstr(main_source, "control_button_sample") != NULL);
+    assert(strstr(main_source, "switch_preset(value) != ESP_OK") != NULL);
     assert(strstr(main_source, "set_preset_crosshair_enabled(stored.active_preset, enabled)") != NULL);
-    assert(strstr(main_source, "Mini2_set_crosshair(&cam, preset_crosshair_enabled(preset))") != NULL);
+    assert(strstr(main_source, "control_apply_preset_transaction") != NULL);
     assert(strstr(main_source, "nvs_set_u8(flash_handle, \"crosshair_mask\", crosshair_preset_mask)") != NULL);
     assert(strstr(main_source, "Mini2_set_crosshair(&cam, preset_crosshair_enabled(stored.active_preset))") != NULL);
     free(main_source);

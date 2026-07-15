@@ -100,7 +100,6 @@ static uint8_t crosshair_preset_mask = 0;
 static bool wifi_next_boot = false;
 static esp_err_t boot_analog_video_initial_status = ESP_ERR_INVALID_STATE;
 static volatile uint8_t last_applied_preset;
-static volatile bool button_edge_pending = false;
 
 static bool preset_crosshair_enabled(uint8_t preset) {
     return (crosshair_preset_mask & (1U << preset)) != 0;
@@ -148,10 +147,24 @@ Mini2_t cam = {
     .variant = Mini2_256
 };
 
-static void apply_preset_with_crosshair(uint8_t preset) {
-    Mini2_apply_preset(&cam, &stored.presets[preset], &stored.alignment, true);
-    Mini2_set_crosshair(&cam, preset_crosshair_enabled(preset));
+static int apply_preset_step(void *context, uint8_t preset) {
+    Mini2_t *camera = context;
+    return Mini2_apply_preset(camera, &stored.presets[preset], &stored.alignment, true);
+}
+
+static int apply_crosshair_step(void *context, bool enabled) {
+    return Mini2_set_crosshair(context, enabled);
+}
+
+static esp_err_t apply_preset_with_crosshair(uint8_t preset) {
+    esp_err_t err = control_apply_preset_transaction(
+        &cam, preset, preset_crosshair_enabled(preset),
+        apply_preset_step, apply_crosshair_step);
+    if (err != ESP_OK) {
+        return err;
+    }
     last_applied_preset = preset;
+    return ESP_OK;
 }
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
@@ -166,15 +179,19 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
     }
 }
 
-void next_preset() { // Preset0 is always seen as active, otherwise the esp32 could crash because it got stuck in a loop during ISR
-    stored.active_preset = (stored.active_preset + 1) % PRESET_COUNT;
-    if (stored.active_preset != 0 && !stored.presets[stored.active_preset].preset_en) {
-        next_preset();
-    }
+static uint8_t next_preset(uint8_t current) {
+    do {
+        current = (current + 1) % PRESET_COUNT;
+    } while (current != 0 && !stored.presets[current].preset_en);
+    return current;
 }
 
-void IRAM_ATTR button_isr_handler(void* arg) {
-    button_edge_pending = true;
+static esp_err_t switch_preset(uint8_t preset) {
+    esp_err_t err = apply_preset_with_crosshair(preset);
+    if (err == ESP_OK) {
+        stored.active_preset = preset;
+    }
+    return err;
 }
 
 static void loop_task(void *pvParameters) {
@@ -206,33 +223,30 @@ static void loop_task(void *pvParameters) {
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, channel, &config));
 
     int64_t last_flip_check = esp_timer_get_time();
-    int64_t button_pressed_at = 0;
-    int64_t button_changed_at = 0;
-    bool button_pressed = false;
-    bool long_press_handled = false;
+    control_button_state_t button_state;
+    control_button_init(&button_state, gpio_get_level(MULTI_BTN) == 0,
+                        esp_timer_get_time());
     #define FLIP_CHECK_INTERVAL (5 * 1000 * 1000)
 
     while (true) {
         const int64_t now = esp_timer_get_time();
-        const bool button_level_pressed = gpio_get_level(MULTI_BTN) == 0;
-        if (button_edge_pending && now - button_changed_at >= BUTTON_DEBOUNCE_US &&
-            button_level_pressed != button_pressed) {
-            button_edge_pending = false;
-            button_changed_at = now;
-            button_pressed = button_level_pressed;
-            if (button_pressed) {
-                button_pressed_at = now;
-                long_press_handled = false;
-            } else if (!long_press_handled) {
-                next_preset();
+        control_button_action_t button_action = control_button_sample(
+            &button_state, gpio_get_level(MULTI_BTN) == 0, now,
+            BUTTON_DEBOUNCE_US, BUTTON_LONG_PRESS_US);
+        if (button_action == CONTROL_BUTTON_SHORT_PRESS) {
+            const uint8_t preset = next_preset(stored.active_preset);
+            esp_err_t button_err = switch_preset(preset);
+            if (button_err == ESP_OK) {
+                button_err = commit_settings();
             }
-        }
-        if (button_pressed && !long_press_handled &&
-            now - button_pressed_at >= BUTTON_LONG_PRESS_US) {
+            if (button_err != ESP_OK) {
+                ESP_LOGE(TAG, "Short press: unable to switch preset: %s",
+                         esp_err_to_name(button_err));
+            }
+        } else if (button_action == CONTROL_BUTTON_LONG_PRESS) {
             const bool enabled = !preset_crosshair_enabled(stored.active_preset);
             if (Mini2_set_crosshair(&cam, enabled) == ESP_OK) {
                 set_preset_crosshair_enabled(stored.active_preset, enabled);
-                long_press_handled = true;
                 esp_err_t button_err = commit_settings();
                 if (button_err == ESP_OK) {
                     ESP_LOGI(TAG, "Long press: preset %u crosshair %s",
@@ -242,7 +256,6 @@ static void loop_task(void *pvParameters) {
                              esp_err_to_name(button_err));
                 }
             } else {
-                long_press_handled = true;
                 ESP_LOGE(TAG, "Long press: unable to set crosshair");
             }
         }
@@ -252,15 +265,6 @@ static void loop_task(void *pvParameters) {
             float new_brightness = ((float)adc_raw / 4095.0) * 100.0;
             max_gain = (int)new_brightness;
             Mini2_set_brightness(&cam, max_gain);
-        }
-        if (stored.active_preset != last_applied_preset) {
-            apply_preset_with_crosshair(stored.active_preset);
-            esp_err_t err = commit_settings();
-            if (err == ESP_OK) {
-                ESP_LOGI(TAG, "Stored values in NVS");
-            } else {
-                ESP_LOGE(TAG, "Unable to store values in NVS");
-            }
         }
         if (stored.alignment.refresh_flip_mode && esp_timer_get_time() - last_flip_check > FLIP_CHECK_INTERVAL) {
             last_flip_check = esp_timer_get_time();
@@ -441,8 +445,13 @@ static esp_err_t post_handler(httpd_req_t *req) {
     ret = json_obj_get_int(&jctx, "active_profile", &value);
     if (ret == OS_SUCCESS) {
         if ((0 <= value) && (value < PRESET_COUNT)) {
-            stored.active_preset = value;
-            apply_preset_with_crosshair(stored.active_preset);
+            if (switch_preset(value) != ESP_OK) {
+                json_parse_end(&jctx);
+                free(buf);
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                    "Unable to switch active profile");
+                return ESP_OK;
+            }
         } else {
             ESP_LOGE(TAG, "Active profile number would be out-of-bounds!");
         }   
@@ -574,7 +583,7 @@ void app_main(void) {
     }
 
     gpio_config_t io_conf = {
-        .intr_type = GPIO_INTR_ANYEDGE,
+        .intr_type = GPIO_INTR_DISABLE,
         .mode = GPIO_MODE_INPUT,
         .pin_bit_mask = (1ULL << MULTI_BTN),
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -650,7 +659,4 @@ void app_main(void) {
         }
     }
 
-    gpio_install_isr_service(0);
-
-    gpio_isr_handler_add(MULTI_BTN, button_isr_handler, NULL);
 }
