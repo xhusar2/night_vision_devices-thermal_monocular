@@ -460,6 +460,7 @@
   <script>
     let sensor_width = 256;
     let sensor_height = 192;
+    let cameraStateAuthoritative = true;
     const diagnosticEntries = [];
 
     function logDiagnostic(message) {
@@ -472,6 +473,14 @@
       const status = document.getElementById("status");
       status.textContent = message;
       status.classList.toggle("error", isError);
+    }
+
+    function setSavedStatus() {
+      if (cameraStateAuthoritative) {
+        setStatus("Saved on device");
+      } else {
+        setStatus("Camera state is not synchronized; reapply a preset", true);
+      }
     }
 
     function showRangeValue(input) {
@@ -530,7 +539,7 @@
         if (!response.ok) throw new Error(`Device rejected the setting (${response.status})`);
         logDiagnostic("SET zoom accepted");
         return sync_data();
-      }).then(() => setStatus("Saved on device"))
+      }).then(setSavedStatus)
         .catch(error => {
           logDiagnostic(`ERROR ${error.message}`);
           setStatus(error.message, true);
@@ -552,7 +561,7 @@
         if (!response.ok) throw new Error(`Device rejected the setting (${response.status})`);
         logDiagnostic(`SET ${key} accepted`);
         return sync_data();
-      }).then(() => setStatus("Saved on device"))
+      }).then(setSavedStatus)
         .catch(error => {
           logDiagnostic(`ERROR ${error.message}`);
           setStatus(error.message, true);
@@ -573,12 +582,19 @@
       })
       .then(data => {
         console.log("Syncing data:", data);
+        cameraStateAuthoritative = data.camera_state_authoritative !== 0;
+        if (!cameraStateAuthoritative) {
+          setStatus(`Camera state is not synchronized (${data.camera_state_status})`, true);
+          logDiagnostic(`ERROR camera state indeterminate (${data.camera_state_status})`);
+        } else if (document.getElementById("status").textContent.startsWith("Camera state is not synchronized")) {
+          setStatus("");
+        }
         document.getElementById("firmware_version").textContent = data.firmware_version || "unknown";
         if (Object.prototype.hasOwnProperty.call(data, "boot_analog_video_initial_ok")) {
           logDiagnostic(`BOOT video save/apply ${data.boot_analog_video_initial_ok ? "ok" : `failed (${data.boot_analog_video_initial_status})`}`);
         }
         for (const key in data) {
-          if (key === "firmware_version" || key.startsWith("boot_analog_video_")) {
+          if (key === "firmware_version" || key.startsWith("boot_analog_video_") || key.startsWith("camera_state_")) {
             continue;
           } else if (key === "sensor_width") {
             sensor_width = data[key];

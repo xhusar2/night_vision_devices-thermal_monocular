@@ -79,6 +79,14 @@ int main(void) {
     assert(!control_point_zoom_is_valid(128, 96, 10, 256, 192));
     assert(!control_point_zoom_is_valid(128, 96, 81, 256, 192));
     assert(!control_point_zoom_is_valid(0, 0, 10, 0, 192));
+    assert(control_percent_is_valid(0) && control_percent_is_valid(100));
+    assert(!control_percent_is_valid(-1) && !control_percent_is_valid(101));
+    assert(control_edge_gear_is_valid(2) && !control_edge_gear_is_valid(3));
+    assert(control_pseudo_color_is_valid(0) && control_pseudo_color_is_valid(9));
+    assert(!control_pseudo_color_is_valid(1));
+    assert(control_scene_mode_is_valid(5) && control_scene_mode_is_valid(9));
+    assert(!control_scene_mode_is_valid(6));
+    assert(control_flip_mode_is_valid(3) && !control_flip_mode_is_valid(4));
 
     control_button_state_t button;
     control_button_init(&button, false, 0);
@@ -154,7 +162,7 @@ int main(void) {
     assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.7\"") != NULL);
     assert(strstr(main_source, "value < NTSC || value > PAL") != NULL);
     assert(strstr(main_source, "stored.alignment.av_format = (enum AnalogVideoFormat)value") != NULL);
-    assert(strstr(main_source, "Unable to set analog video format") != NULL);
+    assert(strstr(main_source, "request_err = Mini2_set_analog_video_format") != NULL);
     const char *uart_init = strstr(main_source, "Mini2_init(&cam)");
     assert(uart_init != NULL);
     const char *ready_delay = strstr(main_source, "vTaskDelay(pdMS_TO_TICKS(5000))");
@@ -169,6 +177,7 @@ int main(void) {
     assert(strstr(main_source, "switch_preset(value) != ESP_OK") != NULL);
     assert(strstr(main_source, "set_preset_crosshair_enabled(stored.active_preset, enabled)") != NULL);
     assert(strstr(main_source, "control_apply_preset_transaction") != NULL);
+    assert(strstr(main_source, "goto uart_failure") != NULL);
     assert(strstr(main_source, "nvs_set_u8(flash_handle, \"crosshair_mask\", crosshair_preset_mask)") != NULL);
     assert(strstr(main_source, "Mini2_set_crosshair(&cam, preset_crosshair_enabled(stored.active_preset))") != NULL);
     free(main_source);
@@ -185,6 +194,8 @@ int main(void) {
     assert(strstr(html, "zoom_x.disabled") == NULL);
     assert(strstr(html, "x: zoom_x") != NULL && strstr(html, "y: zoom_y") != NULL);
     assert(strstr(html, "zoom: zoom") != NULL);
+    assert(strstr(html, "Camera state is not synchronized") != NULL);
+    assert(strstr(html, "cameraStateAuthoritative = data.camera_state_authoritative !== 0") != NULL);
     free(html);
 
     char *mini2 = read_text("components/Mini2/Mini2.c");

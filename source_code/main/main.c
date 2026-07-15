@@ -290,8 +290,6 @@ static void loop_task(void *pvParameters) {
                 set_preset_crosshair_enabled(stored.active_preset, enabled);
                 esp_err_t button_err = commit_settings_with_retry();
                 if (button_err == ESP_OK) {
-                    camera_state_authoritative = true;
-                    camera_state_status = ESP_OK;
                     ESP_LOGI(TAG, "Long press: preset %u crosshair %s",
                              stored.active_preset, enabled ? "enabled" : "disabled");
                 } else {
@@ -300,8 +298,10 @@ static void loop_task(void *pvParameters) {
                     if (rollback_err == ESP_OK) {
                         rollback_err = commit_settings_with_retry();
                     }
-                    camera_state_authoritative = rollback_err == ESP_OK;
-                    camera_state_status = rollback_err == ESP_OK ? button_err : rollback_err;
+                    if (rollback_err != ESP_OK) {
+                        camera_state_authoritative = false;
+                        camera_state_status = rollback_err;
+                    }
                     ESP_LOGE(TAG, "Unable to persist long-press crosshair state: %s",
                              esp_err_to_name(button_err));
                 }
@@ -327,6 +327,8 @@ static void loop_task(void *pvParameters) {
 
 static esp_err_t post_handler(httpd_req_t *req) {
     int ret;
+    esp_err_t request_err = ESP_OK;
+    const char *request_error_message = "Unable to apply setting";
 
     const stored_values_t previous_stored = stored;
     const uint8_t previous_crosshair_mask = crosshair_preset_mask;
@@ -354,35 +356,50 @@ static esp_err_t post_handler(httpd_req_t *req) {
     int value;
     ret = json_obj_get_int(&jctx, "pseudo_color", &value);
     if (ret == OS_SUCCESS) {
-        Mini2_set_color_pallet(&cam, (enum PseudoColor)value);
+        if (!control_pseudo_color_is_valid(value)) {
+            request_err = ESP_ERR_INVALID_ARG;
+            request_error_message = "Invalid pseudo color";
+            goto invalid_request;
+        }
+        request_err = Mini2_set_color_pallet(&cam, (enum PseudoColor)value);
+        if (request_err != ESP_OK) goto uart_failure;
+        request_err = Mini2_set_flip_mode(&cam, stored.alignment.flip_mode);
+        if (request_err != ESP_OK) goto uart_failure;
         stored.presets[stored.active_preset].pseudo_color = (enum PseudoColor)value;
-        Mini2_set_flip_mode(&cam, stored.alignment.flip_mode);
     }
     ret = json_obj_get_int(&jctx, "scene_mode", &value);
     if (ret == OS_SUCCESS) {
-        Mini2_set_scene_mode(&cam, (enum SceneMode)value);
-        stored.presets[stored.active_preset].scene_mode = (enum PseudoColor)value;
-        Mini2_set_flip_mode(&cam, stored.alignment.flip_mode);
+        if (!control_scene_mode_is_valid(value)) {
+            request_err = ESP_ERR_INVALID_ARG;
+            request_error_message = "Invalid scene mode";
+            goto invalid_request;
+        }
+        request_err = Mini2_set_scene_mode(&cam, (enum SceneMode)value);
+        if (request_err != ESP_OK) goto uart_failure;
+        request_err = Mini2_set_flip_mode(&cam, stored.alignment.flip_mode);
+        if (request_err != ESP_OK) goto uart_failure;
+        stored.presets[stored.active_preset].scene_mode = (enum SceneMode)value;
     }
     ret = json_obj_get_int(&jctx, "flip_mode", &value);
     if (ret == OS_SUCCESS) {
-        Mini2_set_flip_mode(&cam, (enum FlipMode)value);
+        if (!control_flip_mode_is_valid(value)) {
+            request_err = ESP_ERR_INVALID_ARG;
+            request_error_message = "Invalid flip mode";
+            goto invalid_request;
+        }
+        request_err = Mini2_set_flip_mode(&cam, (enum FlipMode)value);
+        if (request_err != ESP_OK) goto uart_failure;
         stored.alignment.flip_mode = (enum FlipMode)value;
     }
     ret = json_obj_get_int(&jctx, "av_format", &value);
     if (ret == OS_SUCCESS) {
         if (value < NTSC || value > PAL) {
-            json_parse_end(&jctx);
-            free(buf);
-            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid analog video format");
-            return ESP_OK;
+            request_err = ESP_ERR_INVALID_ARG;
+            request_error_message = "Invalid analog video format";
+            goto invalid_request;
         }
-        if (Mini2_set_analog_video_format(&cam, (enum AnalogVideoFormat)value) != ESP_OK) {
-            json_parse_end(&jctx);
-            free(buf);
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Unable to set analog video format");
-            return ESP_OK;
-        }
+        request_err = Mini2_set_analog_video_format(&cam, (enum AnalogVideoFormat)value);
+        if (request_err != ESP_OK) goto uart_failure;
         stored.alignment.av_format = (enum AnalogVideoFormat)value;
     }
     /* Brightness is done via Poti, so no need
@@ -394,29 +411,49 @@ static esp_err_t post_handler(httpd_req_t *req) {
     */
     ret = json_obj_get_int(&jctx, "contrast", &value);
     if (ret == OS_SUCCESS) {
-        Mini2_set_contrast(&cam, value);
+        if (!control_percent_is_valid(value)) {
+            request_err = ESP_ERR_INVALID_ARG;
+            request_error_message = "Invalid contrast";
+            goto invalid_request;
+        }
+        request_err = Mini2_set_contrast(&cam, value);
+        if (request_err != ESP_OK) goto uart_failure;
         stored.presets[stored.active_preset].contrast = value;
     }
     ret = json_obj_get_int(&jctx, "edge_enhancment_gear", &value);
     if (ret == OS_SUCCESS) {
-        Mini2_set_edge_enhancment(&cam, value);
+        if (!control_edge_gear_is_valid(value)) {
+            request_err = ESP_ERR_INVALID_ARG;
+            request_error_message = "Invalid edge enhancement";
+            goto invalid_request;
+        }
+        request_err = Mini2_set_edge_enhancment(&cam, value);
+        if (request_err != ESP_OK) goto uart_failure;
         stored.presets[stored.active_preset].edge_enhancment_gear = value;
     }
     ret = json_obj_get_int(&jctx, "detail_enhancement_gear", &value);
     if (ret == OS_SUCCESS) {
-        Mini2_set_detail_enhancement(&cam, value);
+        if (!control_percent_is_valid(value)) {
+            request_err = ESP_ERR_INVALID_ARG;
+            request_error_message = "Invalid detail enhancement";
+            goto invalid_request;
+        }
+        request_err = Mini2_set_detail_enhancement(&cam, value);
+        if (request_err != ESP_OK) goto uart_failure;
         stored.presets[stored.active_preset].detail_enhancement_gear = value;
     }
 
     bool bool_val;
     ret = json_obj_get_bool(&jctx, "burn_protection_en", &bool_val);
     if (ret == OS_SUCCESS) {
-        Mini2_set_burn_protection(&cam, bool_val);
+        request_err = Mini2_set_burn_protection(&cam, bool_val);
+        if (request_err != ESP_OK) goto uart_failure;
         stored.presets[stored.active_preset].burn_protection_en = bool_val;
     }
     ret = json_obj_get_bool(&jctx, "auto_shutter_en", &bool_val);
     if (ret == OS_SUCCESS) {
-        Mini2_set_auto_shutter(&cam, bool_val);
+        request_err = Mini2_set_auto_shutter(&cam, bool_val);
+        if (request_err != ESP_OK) goto uart_failure;
         stored.presets[stored.active_preset].auto_shutter_en = bool_val;
     }
 
@@ -443,10 +480,9 @@ static esp_err_t post_handler(httpd_req_t *req) {
     const bool has_zoom = json_obj_has_key(&jctx, "zoom");
     ret = json_obj_get_object(&jctx, "zoom");
     if (has_zoom && ret != OS_SUCCESS) {
-        json_parse_end(&jctx);
-        free(buf);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid zoom object");
-        return ESP_OK;
+        request_err = ESP_ERR_INVALID_ARG;
+        request_error_message = "Invalid zoom object";
+        goto invalid_request;
     }
     if (has_zoom) {
         int x, y, zoom;
@@ -455,17 +491,14 @@ static esp_err_t post_handler(httpd_req_t *req) {
             json_obj_get_int(&jctx, "zoom", &zoom) != OS_SUCCESS ||
             !control_point_zoom_is_valid(x, y, zoom, cam.variant.sensor_width, cam.variant.sensor_height)) {
             json_obj_leave_object(&jctx);
-            json_parse_end(&jctx);
-            free(buf);
-            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid zoom coordinates");
-            return ESP_OK;
+            request_err = ESP_ERR_INVALID_ARG;
+            request_error_message = "Invalid zoom coordinates";
+            goto invalid_request;
         }
-        if (Mini2_set_point_zoom(&cam, (uint16_t)x, (uint16_t)y, (uint8_t)zoom) != ESP_OK) {
+        request_err = Mini2_set_point_zoom(&cam, (uint16_t)x, (uint16_t)y, (uint8_t)zoom);
+        if (request_err != ESP_OK) {
             json_obj_leave_object(&jctx);
-            json_parse_end(&jctx);
-            free(buf);
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Unable to set zoom");
-            return ESP_OK;
+            goto uart_failure;
         }
         stored.alignment.zoom = zoom;
         stored.alignment.zoom_x = x;
@@ -476,18 +509,13 @@ static esp_err_t post_handler(httpd_req_t *req) {
     const bool has_crosshair_enabled = json_obj_has_key(&jctx, "crosshair_enabled");
     ret = json_obj_get_bool(&jctx, "crosshair_enabled", &bool_val);
     if (has_crosshair_enabled && ret != OS_SUCCESS) {
-        json_parse_end(&jctx);
-        free(buf);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid crosshair setting");
-        return ESP_OK;
+        request_err = ESP_ERR_INVALID_ARG;
+        request_error_message = "Invalid crosshair setting";
+        goto invalid_request;
     }
     if (has_crosshair_enabled) {
-        if (Mini2_set_crosshair(&cam, bool_val) != ESP_OK) {
-            json_parse_end(&jctx);
-            free(buf);
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Unable to set crosshair");
-            return ESP_OK;
-        }
+        request_err = Mini2_set_crosshair(&cam, bool_val);
+        if (request_err != ESP_OK) goto uart_failure;
         set_preset_crosshair_enabled(stored.active_preset, bool_val);
     }
 
@@ -500,19 +528,9 @@ static esp_err_t post_handler(httpd_req_t *req) {
     if (ret == OS_SUCCESS) {
         if ((0 <= value) && (value < PRESET_COUNT)) {
             if (switch_preset(value) != ESP_OK) {
-                stored = previous_stored;
-                crosshair_preset_mask = previous_crosshair_mask;
-                wifi_next_boot = previous_wifi_next_boot;
-                esp_err_t rollback_err = apply_preset_with_crosshair(stored.active_preset);
-                camera_state_authoritative = rollback_err == ESP_OK;
-                if (rollback_err != ESP_OK) {
-                    camera_state_status = rollback_err;
-                }
-                json_parse_end(&jctx);
-                free(buf);
-                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                                    "Unable to switch active profile");
-                return ESP_OK;
+                request_err = camera_state_status;
+                request_error_message = "Unable to switch active profile";
+                goto uart_failure;
             }
         } else {
             ESP_LOGE(TAG, "Active profile number would be out-of-bounds!");
@@ -543,8 +561,6 @@ static esp_err_t post_handler(httpd_req_t *req) {
 
     esp_err_t err = commit_settings_with_retry();
     if (err == ESP_OK) {
-        camera_state_authoritative = true;
-        camera_state_status = ESP_OK;
         ESP_LOGI(TAG, "Stored values in NVS");
     } else {
         stored = previous_stored;
@@ -563,6 +579,36 @@ static esp_err_t post_handler(httpd_req_t *req) {
         return ESP_OK;
     }
     return httpd_resp_send_chunk(req, NULL, 0);
+
+uart_failure:
+    stored = previous_stored;
+    crosshair_preset_mask = previous_crosshair_mask;
+    wifi_next_boot = previous_wifi_next_boot;
+    {
+        esp_err_t rollback_err = apply_preset_with_crosshair(stored.active_preset);
+        camera_state_authoritative = rollback_err == ESP_OK;
+        camera_state_status = rollback_err == ESP_OK ? request_err : rollback_err;
+        ESP_LOGE(TAG, "Web UART change failed (%s), rollback %s",
+                 esp_err_to_name(request_err), rollback_err == ESP_OK ? "succeeded" : "failed");
+    }
+    json_parse_end(&jctx);
+    free(buf);
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, request_error_message);
+    return ESP_OK;
+
+invalid_request:
+    stored = previous_stored;
+    crosshair_preset_mask = previous_crosshair_mask;
+    wifi_next_boot = previous_wifi_next_boot;
+    {
+        esp_err_t rollback_err = apply_preset_with_crosshair(stored.active_preset);
+        camera_state_authoritative = rollback_err == ESP_OK;
+        camera_state_status = rollback_err == ESP_OK ? request_err : rollback_err;
+    }
+    json_parse_end(&jctx);
+    free(buf);
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, request_error_message);
+    return ESP_OK;
 }
 
 static esp_err_t retireve_values(httpd_req_t *req) {
@@ -716,8 +762,12 @@ void app_main(void) {
     }
     last_applied_preset = stored.active_preset;
     if (boot_analog_video_initial_status == ESP_OK) {
+        camera_state_authoritative = true;
+        camera_state_status = ESP_OK;
         ESP_LOGI(TAG, "Boot video save/apply initialization succeeded");
     } else {
+        camera_state_authoritative = false;
+        camera_state_status = boot_analog_video_initial_status;
         ESP_LOGE(TAG, "Boot video save/apply initialization failed: %s", esp_err_to_name(boot_analog_video_initial_status));
     }
     xTaskCreate(loop_task, "loop task", 16384, NULL, 5, NULL);

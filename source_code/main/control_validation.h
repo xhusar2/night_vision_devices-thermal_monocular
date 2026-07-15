@@ -42,6 +42,26 @@ static inline bool control_point_zoom_is_valid(int x, int y, int zoom,
     return x >= 0 && x < sensor_width && y >= 0 && y < sensor_height;
 }
 
+static inline bool control_percent_is_valid(int value) {
+    return value >= 0 && value <= 100;
+}
+
+static inline bool control_edge_gear_is_valid(int value) {
+    return value >= 0 && value <= 2;
+}
+
+static inline bool control_pseudo_color_is_valid(int value) {
+    return value == 0 || value == 9;
+}
+
+static inline bool control_scene_mode_is_valid(int value) {
+    return (value >= 0 && value <= 5) || value == 9;
+}
+
+static inline bool control_flip_mode_is_valid(int value) {
+    return value >= 0 && value <= 3;
+}
+
 typedef enum {
     CONTROL_BUTTON_NONE,
     CONTROL_BUTTON_SHORT_PRESS,
