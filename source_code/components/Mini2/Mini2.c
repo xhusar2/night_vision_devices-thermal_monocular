@@ -57,6 +57,9 @@ esp_err_t Mini2_write_command(Mini2_t* cam, uint8_t* cmd, size_t len) {
 
 esp_err_t Mini2_read_command(Mini2_t* cam, uint8_t* cmd, size_t len, uint8_t* out_buf, size_t* out_len) {
     esp_err_t err_code;
+    const size_t expected_len = *out_len;
+
+    memset(out_buf, 0, expected_len);
 
     uart_flush(cam->uart_port);
     err_code = Mini2_write_command(cam, cmd, len);
@@ -64,7 +67,8 @@ esp_err_t Mini2_read_command(Mini2_t* cam, uint8_t* cmd, size_t len, uint8_t* ou
         return err_code;
     }
     int bytes_read = uart_read_bytes(cam->uart_port, out_buf, *out_len, pdMS_TO_TICKS(200));
-    if (bytes_read < 0) {
+    if (bytes_read <= 0 || (size_t)bytes_read != expected_len) {
+        *out_len = bytes_read > 0 ? (size_t)bytes_read : 0;
         return ESP_FAIL;
     }
 
@@ -113,7 +117,7 @@ esp_err_t Mini2_set_analog_video_format(Mini2_t* cam, enum AnalogVideoFormat av_
 }
 
 esp_err_t Mini2_get_analog_video_format(Mini2_t* cam, enum AnalogVideoFormat* av_format_out) {
-    uint8_t rx_buffer[11];
+    uint8_t rx_buffer[11] = {0};
     size_t len = sizeof(rx_buffer);
 
     uint8_t cmd[] = {0x10, 0x10, 0x8a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02};
@@ -276,15 +280,16 @@ esp_err_t Mini2_apply_preset(Mini2_t* cam, value_preset_t* preset, alignment_pre
             esp_err_t digital_err = Mini2_set_digital_video_format(cam, true, UsbProgressive, Hz50);
             ESP_LOGI(Mini2_TAG, "Boot video digital enable at %lld ms: %s",
                      esp_timer_get_time() / 1000, esp_err_to_name(digital_err));
-            if (err == ESP_OK && digital_err != ESP_OK) err = digital_err;
+            if (digital_err != ESP_OK) return digital_err;
             esp_err_t analog_video_err = Mini2_set_analog_video_format(cam, alignment->av_format);
             ESP_LOGI(Mini2_TAG, "Boot video analog format at %lld ms: %s",
                      esp_timer_get_time() / 1000, esp_err_to_name(analog_video_err));
-            if (err == ESP_OK && analog_video_err != ESP_OK) err = analog_video_err;
+            if (analog_video_err != ESP_OK) return analog_video_err;
             esp_err_t save_video_err = Mini2_save_video(cam);
             ESP_LOGI(Mini2_TAG, "Boot video save/apply at %lld ms: %s",
                      esp_timer_get_time() / 1000, esp_err_to_name(save_video_err));
-            if (err == ESP_OK && save_video_err != ESP_OK) err = save_video_err;
+            if (save_video_err != ESP_OK) return save_video_err;
+            vTaskDelay(pdMS_TO_TICKS(500));
         }
     }
 

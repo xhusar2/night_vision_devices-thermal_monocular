@@ -22,7 +22,7 @@
 #define SSID "THERMAL_MONOCULAR"
 #define PASSWORD "password123"
 #define PRESET_COUNT 3
-#define FIRMWARE_VERSION "0.4.5"
+#define FIRMWARE_VERSION "0.4.6"
 
 #define UART_TX GPIO_NUM_1
 #define UART_RX GPIO_NUM_2
@@ -265,8 +265,19 @@ static esp_err_t post_handler(httpd_req_t *req) {
     }
     ret = json_obj_get_int(&jctx, "av_format", &value);
     if (ret == OS_SUCCESS) {
-        Mini2_set_analog_video_format(&cam, (enum AnalogVideoFormat)value);
-        stored.alignment.av_format = (enum PseudoColor)value;
+        if (value < NTSC || value > PAL) {
+            json_parse_end(&jctx);
+            free(buf);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid analog video format");
+            return ESP_OK;
+        }
+        if (Mini2_set_analog_video_format(&cam, (enum AnalogVideoFormat)value) != ESP_OK) {
+            json_parse_end(&jctx);
+            free(buf);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Unable to set analog video format");
+            return ESP_OK;
+        }
+        stored.alignment.av_format = (enum AnalogVideoFormat)value;
     }
     /* Brightness is done via Poti, so no need
             ret = json_obj_get_int(&jctx, "brightness", &value);

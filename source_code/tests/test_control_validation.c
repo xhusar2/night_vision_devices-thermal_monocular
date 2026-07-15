@@ -36,14 +36,17 @@ int main(void) {
     int state_length = snprintf(state_json, sizeof(state_json), CONTROL_STATE_JSON_FORMAT,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
-        UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, "0.4.5",
+        UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, "0.4.6",
         UINT_MAX, INT_MIN);
     assert(state_length > 0);
     assert((size_t)state_length < sizeof(state_json));
 
     char *main_source = read_text("main/main.c");
     assert(strstr(main_source, "boot_analog_video_task") == NULL);
-    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.5\"") != NULL);
+    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.6\"") != NULL);
+    assert(strstr(main_source, "value < NTSC || value > PAL") != NULL);
+    assert(strstr(main_source, "stored.alignment.av_format = (enum AnalogVideoFormat)value") != NULL);
+    assert(strstr(main_source, "Unable to set analog video format") != NULL);
     const char *uart_init = strstr(main_source, "Mini2_init(&cam)");
     assert(uart_init != NULL);
     const char *ready_delay = strstr(main_source, "vTaskDelay(pdMS_TO_TICKS(5000))");
@@ -80,7 +83,11 @@ int main(void) {
     assert(strstr(apply, "Boot video analog format at %lld ms") != NULL);
     assert(strstr(apply, "Boot video save/apply at %lld ms") != NULL);
     assert(strstr(apply, "format_read_err != ESP_OK || format != alignment->av_format") != NULL);
+    assert(strstr(apply, "vTaskDelay(pdMS_TO_TICKS(500))") != NULL);
     assert(strstr(apply, "Mini2_NUC(cam)") == NULL);
+    assert(strstr(mini2, "memset(out_buf, 0, expected_len)") != NULL);
+    assert(strstr(mini2, "bytes_read <= 0 || (size_t)bytes_read != expected_len") != NULL);
+    assert(strstr(mini2, "uint8_t rx_buffer[11] = {0}") != NULL);
     free(mini2);
     return 0;
 }
