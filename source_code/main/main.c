@@ -338,8 +338,15 @@ static esp_err_t post_handler(httpd_req_t *req) {
         json_obj_leave_object(&jctx);
     }
 
+    const bool has_crosshair_enabled = json_obj_has_key(&jctx, "crosshair_enabled");
     ret = json_obj_get_bool(&jctx, "crosshair_enabled", &bool_val);
-    if (ret == OS_SUCCESS) {
+    if (has_crosshair_enabled && ret != OS_SUCCESS) {
+        json_parse_end(&jctx);
+        free(buf);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid crosshair setting");
+        return ESP_OK;
+    }
+    if (has_crosshair_enabled) {
         if (Mini2_set_crosshair(&cam, bool_val) != ESP_OK) {
             json_parse_end(&jctx);
             free(buf);
