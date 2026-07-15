@@ -546,8 +546,6 @@ void app_main(void) {
     }
     Mini2_apply_preset(&cam, &stored.presets[stored.active_preset], &stored.alignment, false);
 
-    Mini2_set_crosshair(&cam, crosshair_enabled);
-
     xTaskCreate(loop_task, "loop task", 16384, NULL, 5, NULL);
 
     if (wifi_en) {
