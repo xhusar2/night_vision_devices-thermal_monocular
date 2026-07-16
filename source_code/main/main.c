@@ -22,7 +22,7 @@
 #define SSID "THERMAL_MONOCULAR"
 #define PASSWORD "password123"
 #define PRESET_COUNT 3
-#define FIRMWARE_VERSION "0.4.11"
+#define FIRMWARE_VERSION "0.4.12"
 #define BUTTON_DEBOUNCE_US (50 * 1000)
 #define BUTTON_LONG_PRESS_US (2 * 1000 * 1000)
 #define PERSIST_ATTEMPTS 3
@@ -938,9 +938,11 @@ void app_main(void) {
     ESP_LOGI(TAG, "Mini2 UART initialized at %lld ms", esp_timer_get_time() / 1000);
 
     boot_analog_video_initial_status = Mini2_apply_preset(&cam, &stored.presets[stored.active_preset], &stored.alignment, false);
-    esp_err_t boot_crosshair_status = Mini2_set_crosshair(&cam, preset_crosshair_enabled(stored.active_preset));
-    if (boot_analog_video_initial_status == ESP_OK && boot_crosshair_status != ESP_OK) {
-        boot_analog_video_initial_status = boot_crosshair_status;
+    if (boot_analog_video_initial_status == ESP_OK) {
+        ESP_LOGI(TAG, "Mini2 boot warm-up started at %lld ms", esp_timer_get_time() / 1000);
+        vTaskDelay(pdMS_TO_TICKS(2500));
+        ESP_LOGI(TAG, "Mini2 boot warm-up completed at %lld ms", esp_timer_get_time() / 1000);
+        boot_analog_video_initial_status = Mini2_set_crosshair(&cam, preset_crosshair_enabled(stored.active_preset));
     }
     if (boot_analog_video_initial_status == ESP_OK) {
         boot_analog_video_initial_status = Mini2_set_crosshair_position(

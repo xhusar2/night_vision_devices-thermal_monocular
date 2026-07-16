@@ -186,14 +186,14 @@ int main(void) {
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
         INT_MIN, INT_MIN, INT_MIN, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
-        UINT_MAX, UINT_MAX, UINT_MAX, "0.4.11",
+        UINT_MAX, UINT_MAX, UINT_MAX, "0.4.12",
         UINT_MAX, INT_MIN, UINT_MAX, INT_MIN, UINT_MAX, INT_MIN);
     assert(state_length > 0);
     assert((size_t)state_length < sizeof(state_json));
 
     char *main_source = read_text("main/main.c");
     assert(strstr(main_source, "boot_analog_video_task") == NULL);
-    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.11\"") != NULL);
+    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.12\"") != NULL);
     assert(strstr(main_source, "value < NTSC || value > PAL") != NULL);
     assert(strstr(main_source, "stored.alignment.av_format = (enum AnalogVideoFormat)value") != NULL);
     assert(strstr(main_source, "request_err = Mini2_set_analog_video_format") != NULL);
@@ -219,8 +219,16 @@ int main(void) {
            preset_transaction < preset_position);
     const char *boot_apply = strstr(cold_boot, "Mini2_apply_preset");
     assert(boot_apply != NULL);
+    const char *boot_apply_success = strstr(boot_apply, "if (boot_analog_video_initial_status == ESP_OK)");
+    const char *warmup_start = strstr(boot_apply_success, "Mini2 boot warm-up started");
+    const char *warmup_delay = strstr(warmup_start, "vTaskDelay(pdMS_TO_TICKS(2500))");
+    const char *warmup_complete = strstr(warmup_delay, "Mini2 boot warm-up completed");
     const char *boot_crosshair = strstr(boot_apply, "Mini2_set_crosshair(&cam");
-    assert(boot_crosshair != NULL);
+    assert(boot_apply_success != NULL && warmup_start != NULL && warmup_delay != NULL &&
+           warmup_complete != NULL && boot_crosshair != NULL);
+    assert(boot_apply < boot_apply_success && boot_apply_success < warmup_start &&
+           warmup_start < warmup_delay && warmup_delay < warmup_complete &&
+           warmup_complete < boot_crosshair);
     const char *boot_position = strstr(boot_crosshair, "Mini2_set_crosshair_position");
     assert(boot_position != NULL && boot_apply < boot_crosshair && boot_crosshair < boot_position);
     assert(strstr(main_source, "goto uart_failure") != NULL);
