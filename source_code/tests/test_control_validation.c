@@ -186,14 +186,14 @@ int main(void) {
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
         INT_MIN, INT_MIN, INT_MIN, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
-        UINT_MAX, UINT_MAX, UINT_MAX, "0.4.9",
+        UINT_MAX, UINT_MAX, UINT_MAX, "0.4.10",
         UINT_MAX, INT_MIN, UINT_MAX, INT_MIN, UINT_MAX, INT_MIN);
     assert(state_length > 0);
     assert((size_t)state_length < sizeof(state_json));
 
     char *main_source = read_text("main/main.c");
     assert(strstr(main_source, "boot_analog_video_task") == NULL);
-    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.9\"") != NULL);
+    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.10\"") != NULL);
     assert(strstr(main_source, "value < NTSC || value > PAL") != NULL);
     assert(strstr(main_source, "stored.alignment.av_format = (enum AnalogVideoFormat)value") != NULL);
     assert(strstr(main_source, "request_err = Mini2_set_analog_video_format") != NULL);
@@ -264,12 +264,16 @@ int main(void) {
     const char *analog = strstr(apply, "Mini2_set_analog_video_format(cam, alignment->av_format)");
     const char *save = strstr(apply, "Mini2_save_video(cam)");
     const char *scene = strstr(apply, "Mini2_set_scene_mode");
-    assert(digital != NULL && analog != NULL && save != NULL && scene != NULL &&
-           digital < analog && analog < save && save < scene);
+    const char *settle = strstr(apply, "vTaskDelay(pdMS_TO_TICKS(100))");
+    const char *save_condition = strstr(apply, "format_read_err == ESP_OK && format != alignment->av_format");
+    assert(digital != NULL && analog != NULL && settle != NULL && save_condition != NULL &&
+           save != NULL && scene != NULL && digital < analog && analog < settle &&
+           settle < save_condition && save_condition < save && save < scene);
     assert(strstr(apply, "Boot video digital enable at %lld ms") != NULL);
     assert(strstr(apply, "Boot video analog format at %lld ms") != NULL);
+    assert(strstr(apply, "Boot video analog settle at %lld ms: complete") != NULL);
     assert(strstr(apply, "Boot video save/apply at %lld ms") != NULL);
-    assert(strstr(apply, "format_read_err != ESP_OK || format != alignment->av_format") != NULL);
+    assert(strstr(apply, "format_read_err != ESP_OK || format != alignment->av_format") == NULL);
     assert(strstr(apply, "vTaskDelay(pdMS_TO_TICKS(500))") != NULL);
     assert(strstr(apply, "Mini2_NUC(cam)") == NULL);
     assert(strstr(mini2, "memset(out_buf, 0, expected_len)") != NULL);
