@@ -28,8 +28,8 @@ A fully functional **DIY thermal imaging monocular** built around a 256×192 the
 - **J-arm mount** option for head/helmet mounting
 - **Wilcox mount** option for head/helmet mounting
 - **Adjustable image orientation** — flip vertical/horizontal in firmware
-- **Web-based aiming controls** — toggle the camera crosshair and adjust its horizontal and vertical aim
-- **Physical controls** — potentiometer + push buttons for on-device menu navigation
+- **Per-preset aiming controls** — toggle and position the crosshair from the web interface; each preset restores its saved state and position
+- **Physical preset control** — release GPIO8 after a short press to change presets, or hold it for 2 seconds to toggle the current preset's crosshair
 - **5.5×2.1mm DC power inlet** — run from external battery pack
 - **3D-printed body** — printable on any FDM printer, all STLs included
 - **Flashable via browser** — no toolchain needed for end users
