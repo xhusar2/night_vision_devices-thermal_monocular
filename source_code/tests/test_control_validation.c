@@ -186,14 +186,14 @@ int main(void) {
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
         INT_MIN, INT_MIN, INT_MIN, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
         UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
-        UINT_MAX, UINT_MAX, UINT_MAX, "0.4.10",
+        UINT_MAX, UINT_MAX, UINT_MAX, "0.4.11",
         UINT_MAX, INT_MIN, UINT_MAX, INT_MIN, UINT_MAX, INT_MIN);
     assert(state_length > 0);
     assert((size_t)state_length < sizeof(state_json));
 
     char *main_source = read_text("main/main.c");
     assert(strstr(main_source, "boot_analog_video_task") == NULL);
-    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.10\"") != NULL);
+    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.11\"") != NULL);
     assert(strstr(main_source, "value < NTSC || value > PAL") != NULL);
     assert(strstr(main_source, "stored.alignment.av_format = (enum AnalogVideoFormat)value") != NULL);
     assert(strstr(main_source, "request_err = Mini2_set_analog_video_format") != NULL);
@@ -211,6 +211,18 @@ int main(void) {
     assert(strstr(main_source, "switch_preset(value) != ESP_OK") != NULL);
     assert(strstr(main_source, "set_preset_crosshair_enabled(stored.active_preset, enabled)") != NULL);
     assert(strstr(main_source, "control_apply_preset_transaction") != NULL);
+    const char *preset_apply = strstr(main_source, "static esp_err_t apply_preset_with_crosshair");
+    assert(preset_apply != NULL);
+    const char *preset_transaction = strstr(preset_apply, "control_apply_preset_transaction");
+    const char *preset_position = strstr(preset_apply, "Mini2_set_crosshair_position");
+    assert(preset_transaction != NULL && preset_position != NULL &&
+           preset_transaction < preset_position);
+    const char *boot_apply = strstr(cold_boot, "Mini2_apply_preset");
+    assert(boot_apply != NULL);
+    const char *boot_crosshair = strstr(boot_apply, "Mini2_set_crosshair(&cam");
+    assert(boot_crosshair != NULL);
+    const char *boot_position = strstr(boot_crosshair, "Mini2_set_crosshair_position");
+    assert(boot_position != NULL && boot_apply < boot_crosshair && boot_crosshair < boot_position);
     assert(strstr(main_source, "goto uart_failure") != NULL);
     assert(strstr(main_source, "bool device_mutated = false") != NULL);
     assert(strstr(main_source, "if (control_rollback_required(device_mutated))") != NULL);
@@ -264,17 +276,15 @@ int main(void) {
     const char *analog = strstr(apply, "Mini2_set_analog_video_format(cam, alignment->av_format)");
     const char *save = strstr(apply, "Mini2_save_video(cam)");
     const char *scene = strstr(apply, "Mini2_set_scene_mode");
-    const char *settle = strstr(apply, "vTaskDelay(pdMS_TO_TICKS(100))");
-    const char *save_condition = strstr(apply, "format_read_err == ESP_OK && format != alignment->av_format");
-    assert(digital != NULL && analog != NULL && settle != NULL && save_condition != NULL &&
-           save != NULL && scene != NULL && digital < analog && analog < settle &&
-           settle < save_condition && save_condition < save && save < scene);
+    const char *settle = strstr(apply, "vTaskDelay(pdMS_TO_TICKS(500))");
+    const char *apply_condition = strstr(apply, "format_read_err != ESP_OK || format != alignment->av_format");
+    assert(apply_condition != NULL && digital != NULL && analog != NULL && save != NULL &&
+           settle != NULL && scene != NULL && apply_condition < digital && digital < analog &&
+           analog < save && save < settle && settle < scene);
     assert(strstr(apply, "Boot video digital enable at %lld ms") != NULL);
     assert(strstr(apply, "Boot video analog format at %lld ms") != NULL);
-    assert(strstr(apply, "Boot video analog settle at %lld ms: complete") != NULL);
     assert(strstr(apply, "Boot video save/apply at %lld ms") != NULL);
-    assert(strstr(apply, "format_read_err != ESP_OK || format != alignment->av_format") == NULL);
-    assert(strstr(apply, "vTaskDelay(pdMS_TO_TICKS(500))") != NULL);
+    assert(strstr(apply, "vTaskDelay(pdMS_TO_TICKS(100))") == NULL);
     assert(strstr(apply, "Mini2_NUC(cam)") == NULL);
     assert(strstr(mini2, "memset(out_buf, 0, expected_len)") != NULL);
     assert(strstr(mini2, "bytes_read <= 0 || (size_t)bytes_read != expected_len") != NULL);

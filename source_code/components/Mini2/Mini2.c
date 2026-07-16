@@ -303,18 +303,15 @@ esp_err_t Mini2_apply_preset(Mini2_t* cam, value_preset_t* preset, alignment_pre
     
     if (!seem_less) {
         format_read_err = Mini2_get_analog_video_format(cam, &format);
-        esp_err_t digital_err = Mini2_set_digital_video_format(cam, true, UsbProgressive, Hz50);
-        ESP_LOGI(Mini2_TAG, "Boot video digital enable at %lld ms: %s",
-                 esp_timer_get_time() / 1000, esp_err_to_name(digital_err));
-        if (digital_err != ESP_OK) return digital_err;
-        esp_err_t analog_video_err = Mini2_set_analog_video_format(cam, alignment->av_format);
-        ESP_LOGI(Mini2_TAG, "Boot video analog format at %lld ms: %s",
-                 esp_timer_get_time() / 1000, esp_err_to_name(analog_video_err));
-        if (analog_video_err != ESP_OK) return analog_video_err;
-        vTaskDelay(pdMS_TO_TICKS(100));
-        ESP_LOGI(Mini2_TAG, "Boot video analog settle at %lld ms: complete",
-                 esp_timer_get_time() / 1000);
-        if (format_read_err == ESP_OK && format != alignment->av_format) {
+        if (format_read_err != ESP_OK || format != alignment->av_format) {
+            esp_err_t digital_err = Mini2_set_digital_video_format(cam, true, UsbProgressive, Hz50);
+            ESP_LOGI(Mini2_TAG, "Boot video digital enable at %lld ms: %s",
+                     esp_timer_get_time() / 1000, esp_err_to_name(digital_err));
+            if (digital_err != ESP_OK) return digital_err;
+            esp_err_t analog_video_err = Mini2_set_analog_video_format(cam, alignment->av_format);
+            ESP_LOGI(Mini2_TAG, "Boot video analog format at %lld ms: %s",
+                     esp_timer_get_time() / 1000, esp_err_to_name(analog_video_err));
+            if (analog_video_err != ESP_OK) return analog_video_err;
             esp_err_t save_video_err = Mini2_save_video(cam);
             ESP_LOGI(Mini2_TAG, "Boot video save/apply at %lld ms: %s",
                      esp_timer_get_time() / 1000, esp_err_to_name(save_video_err));
