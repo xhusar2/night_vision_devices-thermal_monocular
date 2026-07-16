@@ -57,6 +57,9 @@ esp_err_t Mini2_write_command(Mini2_t* cam, uint8_t* cmd, size_t len) {
 
 esp_err_t Mini2_read_command(Mini2_t* cam, uint8_t* cmd, size_t len, uint8_t* out_buf, size_t* out_len) {
     esp_err_t err_code;
+    const size_t expected_len = *out_len;
+
+    memset(out_buf, 0, expected_len);
 
     uart_flush(cam->uart_port);
     err_code = Mini2_write_command(cam, cmd, len);
@@ -64,7 +67,8 @@ esp_err_t Mini2_read_command(Mini2_t* cam, uint8_t* cmd, size_t len, uint8_t* ou
         return err_code;
     }
     int bytes_read = uart_read_bytes(cam->uart_port, out_buf, *out_len, pdMS_TO_TICKS(200));
-    if (bytes_read < 0) {
+    if (bytes_read <= 0 || (size_t)bytes_read != expected_len) {
+        *out_len = bytes_read > 0 ? (size_t)bytes_read : 0;
         return ESP_FAIL;
     }
 
@@ -113,7 +117,7 @@ esp_err_t Mini2_set_analog_video_format(Mini2_t* cam, enum AnalogVideoFormat av_
 }
 
 esp_err_t Mini2_get_analog_video_format(Mini2_t* cam, enum AnalogVideoFormat* av_format_out) {
-    uint8_t rx_buffer[11];
+    uint8_t rx_buffer[11] = {0};
     size_t len = sizeof(rx_buffer);
 
     uint8_t cmd[] = {0x10, 0x10, 0x8a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02};
@@ -176,6 +180,21 @@ esp_err_t Mini2_set_detail_enhancement(Mini2_t* cam, uint8_t gear) {
     return Mini2_write_command(cam, cmd, sizeof(cmd));
 }
 
+esp_err_t Mini2_set_spatial_noise_reduction(Mini2_t* cam, uint8_t value) {
+    uint8_t cmd[] = {0x10, 0x04, 0x4B, 0x00, value};
+    return Mini2_write_command(cam, cmd, sizeof(cmd));
+}
+
+esp_err_t Mini2_set_temporal_noise_reduction(Mini2_t* cam, uint8_t value) {
+    uint8_t cmd[] = {0x10, 0x04, 0x4C, 0x00, value};
+    return Mini2_write_command(cam, cmd, sizeof(cmd));
+}
+
+esp_err_t Mini2_set_gamma_intensity(Mini2_t* cam, uint8_t value) {
+    uint8_t cmd[] = {0x10, 0x04, 0x4D, 0x00, value};
+    return Mini2_write_command(cam, cmd, sizeof(cmd));
+}
+
 esp_err_t Mini2_set_burn_protection(Mini2_t* cam, bool enabled) {
     uint8_t cmd[] = {0x10, 0x03, 0x4B, 0x00, (uint8_t)enabled};
     return Mini2_write_command(cam, cmd, sizeof(cmd));
@@ -206,12 +225,12 @@ esp_err_t Mini2_set_point_zoom(Mini2_t* cam, uint16_t x, uint16_t y, uint8_t zoo
         ESP_LOGE(Mini2_TAG, "Zoom must be between 10 and 80 for 1x to 8x");
         return ESP_FAIL;
     }
-    if (x > cam->variant.sensor_width) {
-        ESP_LOGE(Mini2_TAG, "X must be between 0 and sensor width");
+    if (x >= cam->variant.sensor_width) {
+        ESP_LOGE(Mini2_TAG, "X must be less than sensor width");
         return ESP_FAIL;
     }
-    if (y > cam->variant.sensor_height) {
-        ESP_LOGE(Mini2_TAG, "Y must be between 0 and sensor height");
+    if (y >= cam->variant.sensor_height) {
+        ESP_LOGE(Mini2_TAG, "Y must be less than sensor height");
         return ESP_FAIL;
     }
 
@@ -240,6 +259,18 @@ esp_err_t Mini2_set_crosshair(Mini2_t* cam, bool enable) {
     return Mini2_write_command(cam, cmd, sizeof(cmd));
 }
 
+esp_err_t Mini2_set_crosshair_position(Mini2_t* cam, uint16_t x, uint16_t y) {
+    if (x >= cam->variant.sensor_width || y >= cam->variant.sensor_height) {
+        ESP_LOGE(Mini2_TAG, "Crosshair position is outside the sensor");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    uint8_t cmd[] = {0x10, 0x11, 0x58, 0x00,
+                     (uint8_t)(x & 0xff), (uint8_t)(x >> 8),
+                     (uint8_t)(y & 0xff), (uint8_t)(y >> 8)};
+    return Mini2_write_command(cam, cmd, sizeof(cmd));
+}
+
 esp_err_t Mini2_parameters_save(Mini2_t* cam) {
     uint8_t cmd[] = {0x10, 0x10, 0x51};
     return Mini2_write_command(cam, cmd, sizeof(cmd));
@@ -260,43 +291,59 @@ esp_err_t Mini2_Background_Correction(Mini2_t* cam) {
     return Mini2_write_command(cam, cmd, sizeof(cmd));
 }
 
-void Mini2_apply_preset(Mini2_t* cam, value_preset_t* preset, alignment_preset_t* alignment, bool seem_less) {
-    esp_err_t err;
+esp_err_t Mini2_apply_preset(Mini2_t* cam, value_preset_t* preset, alignment_preset_t* alignment, bool seem_less) {
+    esp_err_t err = ESP_OK;
+    esp_err_t format_read_err = ESP_ERR_INVALID_STATE;
+    enum AnalogVideoFormat format = alignment->av_format;
+
+#define RECORD_COMMAND(command) do { \
+    esp_err_t command_err = (command); \
+    if (err == ESP_OK && command_err != ESP_OK) err = command_err; \
+} while (0)
     
     if (!seem_less) {
-        enum AnalogVideoFormat format;
-        err = Mini2_get_analog_video_format(cam, &format);
-        if (err == ESP_OK && format == alignment->av_format) {
-            ESP_LOGI(Mini2_TAG, "Format already matches, no need to send again.");
-        } else {
-            ESP_LOGE(Mini2_TAG, "Failed to read av format, or found missmatch");
-            Mini2_set_digital_video_format(cam, true, UsbProgressive, Hz50);
-            Mini2_set_analog_video_format(cam, alignment->av_format);
-            Mini2_save_video(cam);
+        format_read_err = Mini2_get_analog_video_format(cam, &format);
+        if (format_read_err != ESP_OK || format != alignment->av_format) {
+            esp_err_t digital_err = Mini2_set_digital_video_format(cam, true, UsbProgressive, Hz50);
+            ESP_LOGI(Mini2_TAG, "Boot video digital enable at %lld ms: %s",
+                     esp_timer_get_time() / 1000, esp_err_to_name(digital_err));
+            if (digital_err != ESP_OK) return digital_err;
+            esp_err_t analog_video_err = Mini2_set_analog_video_format(cam, alignment->av_format);
+            ESP_LOGI(Mini2_TAG, "Boot video analog format at %lld ms: %s",
+                     esp_timer_get_time() / 1000, esp_err_to_name(analog_video_err));
+            if (analog_video_err != ESP_OK) return analog_video_err;
+            esp_err_t save_video_err = Mini2_save_video(cam);
+            ESP_LOGI(Mini2_TAG, "Boot video save/apply at %lld ms: %s",
+                     esp_timer_get_time() / 1000, esp_err_to_name(save_video_err));
+            if (save_video_err != ESP_OK) return save_video_err;
+            vTaskDelay(pdMS_TO_TICKS(500));
         }
     }
 
-    Mini2_set_scene_mode(cam, preset->scene_mode);
+    RECORD_COMMAND(Mini2_set_scene_mode(cam, preset->scene_mode));
     // Mini2_set_brightness(cam, preset->brightness); // Brightness is handeld seperatly for THERMAL_MONOCULAR
-    Mini2_set_contrast(cam, preset->contrast);
-    Mini2_set_edge_enhancment(cam, preset->edge_enhancment_gear);
-    Mini2_set_detail_enhancement(cam, preset->detail_enhancement_gear);
-    Mini2_set_burn_protection(cam, true);
-    Mini2_set_auto_shutter(cam, true);
-    Mini2_set_color_pallet(cam, WHOT);
+    RECORD_COMMAND(Mini2_set_contrast(cam, preset->contrast));
+    RECORD_COMMAND(Mini2_set_edge_enhancment(cam, preset->edge_enhancment_gear));
+    RECORD_COMMAND(Mini2_set_detail_enhancement(cam, preset->detail_enhancement_gear));
+    RECORD_COMMAND(Mini2_set_burn_protection(cam, true));
+    RECORD_COMMAND(Mini2_set_auto_shutter(cam, true));
+    RECORD_COMMAND(Mini2_set_color_pallet(cam, WHOT));
 
     if (!seem_less) {
-        Mini2_set_detector_fps(cam, alignment->fps);
+        RECORD_COMMAND(Mini2_set_detector_fps(cam, alignment->fps));
     }
 
     for (int i=0; i<3; i++) { // Newer Cam modules seem to have an issue with getting the command, but not applying it, resending insures that is does.
         if (alignment->flip_mode == No_Flip) {
-            Mini2_set_flip_mode(cam, No_Flip);
-            Mini2_set_point_zoom(cam, alignment->zoom_x, alignment->zoom_y, alignment->zoom);
+            RECORD_COMMAND(Mini2_set_flip_mode(cam, No_Flip));
+            RECORD_COMMAND(Mini2_set_point_zoom(cam, alignment->zoom_x, alignment->zoom_y, alignment->zoom));
         } else {
-            Mini2_set_centre_zoom(cam, 10);
-            Mini2_set_flip_mode(cam, alignment->flip_mode);
+            RECORD_COMMAND(Mini2_set_centre_zoom(cam, 10));
+            RECORD_COMMAND(Mini2_set_flip_mode(cam, alignment->flip_mode));
         }
         vTaskDelay(pdMS_TO_TICKS(50));
     }
+
+    #undef RECORD_COMMAND
+    return err;
 }

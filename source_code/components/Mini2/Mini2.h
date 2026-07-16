@@ -2,6 +2,7 @@
 
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_timer.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
 #include <stdio.h>
@@ -107,6 +108,9 @@ esp_err_t Mini2_set_brightness(Mini2_t* cam, uint8_t brightness);
 esp_err_t Mini2_set_contrast(Mini2_t* cam, uint8_t contrast);
 esp_err_t Mini2_set_edge_enhancment(Mini2_t* cam, uint8_t gear);
 esp_err_t Mini2_set_detail_enhancement(Mini2_t* cam, uint8_t gear);
+esp_err_t Mini2_set_spatial_noise_reduction(Mini2_t* cam, uint8_t value);
+esp_err_t Mini2_set_temporal_noise_reduction(Mini2_t* cam, uint8_t value);
+esp_err_t Mini2_set_gamma_intensity(Mini2_t* cam, uint8_t value);
 esp_err_t Mini2_set_burn_protection(Mini2_t* cam, bool enabled);
 esp_err_t Mini2_set_shutter_position(Mini2_t* cam, bool open);
 esp_err_t Mini2_set_auto_shutter(Mini2_t* cam, bool enabled);
@@ -114,9 +118,10 @@ esp_err_t Mini2_set_centre_zoom(Mini2_t* cam, uint8_t zoom);
 esp_err_t Mini2_set_point_zoom(Mini2_t* cam, uint16_t x, uint16_t y, uint8_t zoom);
 esp_err_t Mini2_set_detector_fps(Mini2_t* cam, enum DetectorRefreshRate fps);
 esp_err_t Mini2_set_crosshair(Mini2_t* cam, bool enable);
+esp_err_t Mini2_set_crosshair_position(Mini2_t* cam, uint16_t x, uint16_t y);
 esp_err_t Mini2_set_sleep(Mini2_t* cam, bool sleep);
 esp_err_t Mini2_parameters_save(Mini2_t* cam);
 esp_err_t Mini2_restore_factory_parameters(Mini2_t* cam);
 esp_err_t Mini2_NUC(Mini2_t* cam);
 esp_err_t Mini2_Background_Correction(Mini2_t* cam);
-void Mini2_apply_preset(Mini2_t* cam, value_preset_t* preset, alignment_preset_t* alignment, bool seem_less);
+esp_err_t Mini2_apply_preset(Mini2_t* cam, value_preset_t* preset, alignment_preset_t* alignment, bool seem_less);

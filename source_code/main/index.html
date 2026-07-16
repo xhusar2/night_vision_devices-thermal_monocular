@@ -51,6 +51,63 @@
       margin: 4px 0 0;
     }
 
+    .hint {
+      grid-column: 1 / -1;
+      margin: -4px 0 2px;
+      color: var(--text_muted);
+      font-size: 0.78rem;
+      line-height: 1.4;
+    }
+
+    .range-control {
+      display: grid !important;
+      grid-template-columns: 1fr 3rem;
+      gap: 10px;
+      width: min(220px, 52vw);
+    }
+
+    .aim-control:not(#zoom_div) .range-control {
+      grid-template-columns: auto 1fr auto 3rem;
+      width: min(300px, 68vw);
+    }
+
+    .step-button {
+      min-width: 2.25rem;
+      min-height: 2.25rem;
+      color: var(--text_color);
+      background: var(--bg_input);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+
+    output {
+      color: var(--accent_cool);
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+
+    #status {
+      min-height: 1.2rem;
+      margin: 12px 4px 0;
+      color: var(--text_muted);
+      font-size: 0.78rem;
+    }
+
+    #status.error { color: #fb7185; }
+
+    .diagnostics {
+      margin: 12px 4px 0;
+      color: var(--text_muted);
+      font-size: 0.72rem;
+    }
+
+    #diagnostic_log {
+      max-height: 7rem;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
     .section-title {
       font-size: 0.7rem;
       text-transform: uppercase;
@@ -280,6 +337,24 @@
           <input type="range" id="detail_enhancement_gear" min="0" max="100" value="0" oninput="updateValue(this.id, this.value)">
         </div>
       </div>
+      <div><label for="spatial_noise_reduction">Spatial noise reduction</label><div class="range-control">
+        <button type="button" onclick="adjustImageLevel('spatial_noise_reduction', -10)">−10</button>
+        <input type="range" id="spatial_noise_reduction" min="0" max="100" step="10" value="0" onchange="updateValue(this.id, this.value)">
+        <button type="button" onclick="adjustImageLevel('spatial_noise_reduction', 10)">+10</button>
+        <output id="spatial_noise_reduction_value">Unset</output>
+      </div></div>
+      <div><label for="temporal_noise_reduction">Temporal noise reduction</label><div class="range-control">
+        <button type="button" onclick="adjustImageLevel('temporal_noise_reduction', -10)">−10</button>
+        <input type="range" id="temporal_noise_reduction" min="0" max="100" step="10" value="0" onchange="updateValue(this.id, this.value)">
+        <button type="button" onclick="adjustImageLevel('temporal_noise_reduction', 10)">+10</button>
+        <output id="temporal_noise_reduction_value">Unset</output>
+      </div></div>
+      <div><label for="gamma_intensity">Gamma intensity</label><div class="range-control">
+        <button type="button" onclick="adjustImageLevel('gamma_intensity', -10)">−10</button>
+        <input type="range" id="gamma_intensity" min="0" max="100" step="10" value="0" onchange="updateValue(this.id, this.value)">
+        <button type="button" onclick="adjustImageLevel('gamma_intensity', 10)">+10</button>
+        <output id="gamma_intensity_value">Unset</output>
+      </div><p class="hint">Unset preserves the camera default. Choosing a value saves it for this preset.</p></div>
       <!--
       <div id="fix_div">
         <label>Fixes</label>
@@ -348,69 +423,162 @@
         </div>
       </div>
       -->
-      <div id="zoom_div">
-        <label>Zoom / X / Y</label>
-        <div style="display: flex; flex-direction: column;">
-          <input class="zoom_slider" type="range" id="zoom" min="10" max="15" value="10" onchange="updateZoom()">
-          <input class="zoom_slider" type="range" id="zoom_x" min="0" max="255" value="0" onchange="updateZoom()">
-          <input class="zoom_slider" type="range" id="zoom_y" min="0" max="191" value="0" onchange="updateZoom()">
+    </div>
+
+    <p class="section-title">Crosshair</p>
+    <div class="main">
+      <div>
+        <label for="crosshair_enabled">Enabled</label>
+        <div>
+          <label class="switch">
+            <input id="crosshair_enabled" onchange="updateValue(this.id, this.checked ? 1 : 0)" type="checkbox">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <p class="hint">Hold the preset button for 2 seconds to toggle the crosshair for the current preset; a short press changes preset. Position is saved independently for each preset.</p>
+      </div>
+      <div>
+        <label for="wifi_next_boot">Wi-Fi on next boot</label>
+        <div><label class="switch"><input id="wifi_next_boot" onchange="updateValue(this.id, this.checked ? 1 : 0)" type="checkbox"><span class="slider"></span></label></div>
+        <p class="hint">One shot: this flag is cleared when the next boot enables Wi-Fi.</p>
+      </div>
+      <div class="aim-control">
+        <label for="crosshair_x">Crosshair Horizontal</label>
+        <div class="range-control">
+          <button class="step-button" id="crosshair_x_minus" type="button" aria-label="Move crosshair left" onclick="adjustCrosshair('crosshair_x', -1)">−</button>
+          <input class="zoom_slider" type="range" id="crosshair_x" min="0" max="255" value="128" oninput="showRangeValue(this)" onchange="updateCrosshairPosition()">
+          <button class="step-button" id="crosshair_x_plus" type="button" aria-label="Move crosshair right" onclick="adjustCrosshair('crosshair_x', 1)">+</button>
+          <output id="crosshair_x_value">128</output>
+        </div>
+      </div>
+      <div class="aim-control">
+        <label for="crosshair_y">Crosshair Vertical</label>
+        <div class="range-control">
+          <button class="step-button" id="crosshair_y_minus" type="button" aria-label="Move crosshair up" onclick="adjustCrosshair('crosshair_y', -1)">−</button>
+          <input class="zoom_slider" type="range" id="crosshair_y" min="0" max="191" value="96" oninput="showRangeValue(this)" onchange="updateCrosshairPosition()">
+          <button class="step-button" id="crosshair_y_plus" type="button" aria-label="Move crosshair down" onclick="adjustCrosshair('crosshair_y', 1)">+</button>
+          <output id="crosshair_y_value">96</output>
         </div>
       </div>
     </div>
+    <p id="status" role="status" aria-live="polite"></p>
+    <footer class="diagnostics">
+      <div>Firmware <span id="firmware_version">unknown</span></div>
+      <div id="diagnostic_log" role="log" aria-live="polite"></div>
+    </footer>
   </div>
 
   <script>
     let sensor_width = 256;
     let sensor_height = 192;
+    let cameraStateAuthoritative = true;
+    let persistenceAuthoritative = true;
+    const diagnosticEntries = [];
 
-    function updateZoomLimits() {
-      const zoom = document.getElementById("zoom");
-      const zoom_x = document.getElementById("zoom_x");
-      const zoom_y = document.getElementById("zoom_y");
-
-      const x_room = Math.ceil((sensor_width - (sensor_width / (parseInt(zoom.value, 10) / 10))) / 2);
-      const y_room = Math.ceil((sensor_height - (sensor_height / (parseInt(zoom.value, 10) / 10))) / 2);
-      zoom_x.min = (sensor_width / 2) - x_room;
-      zoom_x.max = (sensor_width / 2) + x_room;
-      zoom_y.min = (sensor_height / 2) - y_room;
-      zoom_y.max = (sensor_height / 2) + y_room;
+    function logDiagnostic(message) {
+      diagnosticEntries.push(`${new Date().toLocaleTimeString()} ${message}`);
+      if (diagnosticEntries.length > 20) diagnosticEntries.shift();
+      document.getElementById("diagnostic_log").textContent = diagnosticEntries.join("\n");
     }
 
-    function updateZoom() {
+    function setStatus(message, isError = false) {
+      const status = document.getElementById("status");
+      status.textContent = message;
+      status.classList.toggle("error", isError);
+    }
+
+    function setSavedStatus() {
+      if (cameraStateAuthoritative && persistenceAuthoritative) {
+        setStatus("Saved on device");
+      } else {
+        setStatus("Camera state is not synchronized; reapply a preset", true);
+      }
+    }
+
+    function showRangeValue(input) {
+      const output = document.getElementById(`${input.id}_value`);
+      if (output === null) return;
+      output.textContent = input.value;
+    }
+
+    function setAimControlsVisible(visible) {
+      document.querySelectorAll(".aim-control").forEach(element => {
+        element.style.display = visible ? "grid" : "none";
+      });
+    }
+
+    function updateZoomLimits() {
+      const zoom_x = document.getElementById("crosshair_x");
+      const zoom_y = document.getElementById("crosshair_y");
+
+      zoom_x.min = 0;
+      zoom_x.max = sensor_width - 1;
+      zoom_y.min = 0;
+      zoom_y.max = sensor_height - 1;
+      zoom_x.value = Math.min(Number(zoom_x.max), Math.max(Number(zoom_x.min), Number(zoom_x.value)));
+      zoom_y.value = Math.min(Number(zoom_y.max), Math.max(Number(zoom_y.min), Number(zoom_y.value)));
+      showRangeValue(zoom_x);
+      showRangeValue(zoom_y);
+    }
+
+    function adjustCrosshair(id, delta) {
+      const input = document.getElementById(id);
+      input.value = Math.min(Number(input.max), Math.max(Number(input.min), Number(input.value) + delta));
+      showRangeValue(input);
+      updateCrosshairPosition();
+    }
+
+    function adjustImageLevel(id, delta) {
+      const input = document.getElementById(id);
+      input.value = Math.min(100, Math.max(0, Number(input.value) + delta));
+      updateValue(id, input.value);
+    }
+
+    function updateCrosshairPosition() {
       updateZoomLimits();
 
-      const zoom = parseInt(document.getElementById("zoom").value, 10);
-      const zoom_x = parseInt(document.getElementById("zoom_x").value, 10);
-      const zoom_y = parseInt(document.getElementById("zoom_y").value, 10);
+      const zoom_x = parseInt(document.getElementById("crosshair_x").value, 10);
+      const zoom_y = parseInt(document.getElementById("crosshair_y").value, 10);
+      setStatus("Saving…");
+      logDiagnostic(`SET crosshair x=${zoom_x} y=${zoom_y}`);
       fetch("/set", {
         method: "POST",
-        body: JSON.stringify({ zoom: {
-          zoom: zoom,
+        body: JSON.stringify({ crosshair_position: {
           x: zoom_x,
           y: zoom_y
         }})
-      });
+      }).then(response => {
+        if (!response.ok) throw new Error(`Device rejected the setting (${response.status})`);
+        logDiagnostic("SET crosshair position accepted");
+        return sync_data();
+      }).then(setSavedStatus)
+        .catch(error => {
+          logDiagnostic(`ERROR ${error.message}`);
+          setStatus(error.message, true);
+          return sync_data().catch(() => {});
+        });
     }
 
     function updateValue(key, value) {
       if (key === "flip_mode") {
-        const zoom_div = document.getElementById("zoom_div");
-        if (value === "0") {
-          zoom_div.style.display = "grid";
-        } else {
-          zoom_div.style.display = "none";
-        }
+        setAimControlsVisible(value === "0");
       }
       const parsedValue = parseInt(value, 10);
-      console.log(`Updating ${key} with value: ${parsedValue}`);
-      fetch("/set", {
+      setStatus("Saving…");
+      logDiagnostic(`SET ${key}=${parsedValue}`);
+      return fetch("/set", {
         method: "POST",
         body: JSON.stringify({ [key]: parsedValue })
       }).then(response => {
-        if (key === "active_profile") {
-          sync_data();
-        }
-      });
+        if (!response.ok) throw new Error(`Device rejected the setting (${response.status})`);
+        logDiagnostic(`SET ${key} accepted`);
+        return sync_data();
+      }).then(setSavedStatus)
+        .catch(error => {
+          logDiagnostic(`ERROR ${error.message}`);
+          setStatus(error.message, true);
+          return sync_data();
+        });
     }
 
     function updateRemoteValue(key, source) {
@@ -418,27 +586,47 @@
     }
 
     function sync_data() {
-      fetch('/get')
+      logDiagnostic("GET initial/state sync");
+      return fetch('/get')
       .then(response => {
+        if (!response.ok) throw new Error(`Unable to read device state (${response.status})`);
         return response.json();
       })
       .then(data => {
         console.log("Syncing data:", data);
+        cameraStateAuthoritative = data.camera_state_authoritative !== 0;
+        persistenceAuthoritative = data.persistence_authoritative !== 0;
+        if (!cameraStateAuthoritative) {
+          setStatus(`Camera state is not synchronized (${data.camera_state_status})`, true);
+          logDiagnostic(`ERROR camera state indeterminate (${data.camera_state_status})`);
+        } else if (!persistenceAuthoritative) {
+          setStatus(`Saved reboot state is not synchronized (${data.persistence_status})`, true);
+          logDiagnostic(`ERROR persistence indeterminate (${data.persistence_status})`);
+        } else if (document.getElementById("status").textContent.startsWith("Camera state is not synchronized")) {
+          setStatus("");
+        } else if (document.getElementById("status").textContent.startsWith("Saved reboot state is not synchronized")) {
+          setStatus("");
+        }
+        document.getElementById("firmware_version").textContent = data.firmware_version || "unknown";
+        if (Object.prototype.hasOwnProperty.call(data, "boot_analog_video_initial_ok")) {
+          logDiagnostic(`BOOT video save/apply ${data.boot_analog_video_initial_ok ? "ok" : `failed (${data.boot_analog_video_initial_status})`}`);
+        }
         for (const key in data) {
-          if (key === "sensor_width") {
+          if (key === "firmware_version" || key.startsWith("boot_analog_video_") || key.startsWith("camera_state_") || key.startsWith("persistence_")) {
+            continue;
+          } else if (key === "sensor_width") {
             sensor_width = data[key];
-            updateZoomLimits();
           } else if (key === "sensor_height") {
             sensor_height = data[key];
-            updateZoomLimits();
-          } else if (key === "zoom_x") {
-            document.getElementById("zoom_x").value = data[key];
-          } else if (key === "zoom_y") {
-            document.getElementById("zoom_y").value = data[key];
-          } else if (key === "zoom") {
-            document.getElementById("zoom").value = data[key];
-          } else if (key === "auto_shutter_en" || key === "burn_protection_en" || key === "preset_en" || key === "refresh_flip_mode") {
-            document.getElementById(key).checked = data[key];
+          } else if (key === "crosshair_x") {
+            document.getElementById("crosshair_x").value = data[key];
+          } else if (key === "crosshair_y") {
+            document.getElementById("crosshair_y").value = data[key];
+          } else if (key === "auto_shutter_en" || key === "burn_protection_en" || key === "preset_en" || key === "refresh_flip_mode" || key === "crosshair_enabled" || key === "wifi_next_boot") {
+            const checkbox = document.getElementById(key);
+            if (checkbox !== null) {
+              checkbox.checked = data[key];
+            }
           } else if (key === "preset_count") {
             const select = document.getElementById("active_profile");
             if (select.options.length === 0) {
@@ -453,14 +641,16 @@
           } else if (key === "active_profile") {
               const select = document.getElementById("active_profile");
               select.value = data[key];
+          } else if (key === "spatial_noise_reduction" || key === "temporal_noise_reduction" || key === "gamma_intensity") {
+            const element = document.getElementById(key);
+            const output = document.getElementById(`${key}_value`);
+            const configured = data[key] >= 0;
+            element.value = configured ? data[key] : 0;
+            element.dataset.configured = configured ? "true" : "false";
+            output.textContent = configured ? data[key] : "Unset";
           } else {
             if (key === "flip_mode") {
-              const zoom_div = document.getElementById("zoom_div");
-              if (data[key] === 0) {
-                zoom_div.style.display = "grid";
-              } else {
-                zoom_div.style.display = "none";
-              }
+              setAimControlsVisible(data[key] === 0);
             }
 
             const element = document.getElementById(key);
@@ -469,15 +659,19 @@
               continue;
             }
             element.value = data[key];
+            if (element.type === "range") showRangeValue(element);
           }
         }
+        updateZoomLimits();
       })
       .catch(error => {
-        console.error('Can\'t fetch from `/get`, values may be desynced', error);
+        logDiagnostic(`ERROR ${error.message}`);
+        setStatus(error.message, true);
+        throw error;
       });
     }
 
-    sync_data();
+    sync_data().catch(() => {});
   </script>
 </body>
 </html>

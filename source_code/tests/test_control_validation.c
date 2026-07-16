@@ -1,0 +1,306 @@
+#include <assert.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "control_validation.h"
+
+typedef struct {
+    int preset_result;
+    int crosshair_result;
+    int preset_calls;
+    int crosshair_calls;
+} transaction_fake_t;
+
+typedef struct {
+    int apply_result;
+    int persist_failures;
+    int rollback_result;
+    int apply_calls;
+    int persist_calls;
+    int rollback_calls;
+} state_transaction_fake_t;
+
+static int fake_apply(void *context) {
+    state_transaction_fake_t *fake = context;
+    fake->apply_calls++;
+    return fake->apply_result;
+}
+
+static int fake_persist(void *context) {
+    state_transaction_fake_t *fake = context;
+    fake->persist_calls++;
+    return fake->persist_calls <= fake->persist_failures ? -5 : 0;
+}
+
+static int fake_rollback(void *context) {
+    state_transaction_fake_t *fake = context;
+    fake->rollback_calls++;
+    return fake->rollback_result;
+}
+
+static int fake_apply_preset(void *context, uint8_t preset) {
+    transaction_fake_t *fake = context;
+    (void)preset;
+    fake->preset_calls++;
+    return fake->preset_result;
+}
+
+static int fake_apply_crosshair(void *context, bool enabled) {
+    transaction_fake_t *fake = context;
+    (void)enabled;
+    fake->crosshair_calls++;
+    return fake->crosshair_result;
+}
+
+static char *read_text(const char *path) {
+    FILE *file = fopen(path, "rb");
+    assert(file != NULL);
+    assert(fseek(file, 0, SEEK_END) == 0);
+    long length = ftell(file);
+    assert(length >= 0);
+    rewind(file);
+    char *text = malloc((size_t)length + 1);
+    assert(text != NULL);
+    assert(fread(text, 1, (size_t)length, file) == (size_t)length);
+    text[length] = '\0';
+    fclose(file);
+    return text;
+}
+
+static uint16_t frame_crc(uint16_t x, uint16_t y) {
+    uint8_t payload[16] = {0x10, 0x11, 0x58, 0x00,
+                           (uint8_t)(x & 0xff), (uint8_t)(x >> 8),
+                           (uint8_t)(y & 0xff), (uint8_t)(y >> 8)};
+    uint16_t crc = 0;
+    for (size_t i = 0; i < sizeof(payload); i++) {
+        crc ^= (uint16_t)payload[i] << 8;
+        for (int bit = 0; bit < 8; bit++) {
+            crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021)
+                                 : (uint16_t)(crc << 1);
+        }
+    }
+    return crc;
+}
+
+int main(void) {
+    assert(control_point_zoom_is_valid(0, 0, 11, 256, 192));
+    assert(control_point_zoom_is_valid(255, 191, 80, 256, 192));
+    assert(!control_point_zoom_is_valid(-1, 96, 10, 256, 192));
+    assert(!control_point_zoom_is_valid(256, 96, 10, 256, 192));
+    assert(!control_point_zoom_is_valid(128, -1, 10, 256, 192));
+    assert(!control_point_zoom_is_valid(128, 192, 10, 256, 192));
+    assert(!control_point_zoom_is_valid(128, 96, 10, 256, 192));
+    assert(!control_point_zoom_is_valid(128, 96, 81, 256, 192));
+    assert(!control_point_zoom_is_valid(0, 0, 10, 0, 192));
+    assert(control_crosshair_position_is_valid(0, 0, 256, 192));
+    assert(control_crosshair_position_is_valid(255, 191, 256, 192));
+    assert(!control_crosshair_position_is_valid(256, 191, 256, 192));
+    assert(!control_crosshair_position_is_valid(255, 192, 256, 192));
+    assert(frame_crc(128, 96) == 0x24e9); /* transmitted E9 24 */
+    assert(frame_crc(300, 280) == 0x5034); /* transmitted 34 50 */
+    assert(control_percent_is_valid(0) && control_percent_is_valid(100));
+    assert(!control_percent_is_valid(-1) && !control_percent_is_valid(101));
+    assert(control_edge_gear_is_valid(2) && !control_edge_gear_is_valid(3));
+    assert(control_pseudo_color_is_valid(0) && control_pseudo_color_is_valid(9));
+    assert(!control_pseudo_color_is_valid(1));
+    assert(control_scene_mode_is_valid(5) && control_scene_mode_is_valid(9));
+    assert(!control_scene_mode_is_valid(6));
+    assert(control_flip_mode_is_valid(3) && !control_flip_mode_is_valid(4));
+    assert(control_first_error(0, 0) == 0);
+    assert(control_first_error(0, -3) == -3);
+    assert(control_first_error(-3, -4) == -3);
+    assert(!control_rollback_required(false));
+    assert(control_rollback_required(true));
+    assert(control_commit_is_authoritative(0));
+    assert(!control_commit_is_authoritative(-1));
+
+    control_button_state_t button;
+    control_button_init(&button, false, 0);
+    assert(control_button_sample(&button, true, 1000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, false, 20000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, true, 30000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, true, 79999, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, true, 80000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, false, 100000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, false, 150000, 50000, 2000000) == CONTROL_BUTTON_SHORT_PRESS);
+
+    control_button_init(&button, false, 0);
+    assert(control_button_sample(&button, true, 1000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, true, 51000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, true, 2000999, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, true, 2001000, 50000, 2000000) == CONTROL_BUTTON_LONG_PRESS);
+    assert(control_button_sample(&button, true, 3000000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, false, 3100000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+    assert(control_button_sample(&button, false, 3150000, 50000, 2000000) == CONTROL_BUTTON_NONE);
+
+    transaction_fake_t transaction = {.preset_result = -7};
+    assert(control_apply_preset_transaction(&transaction, 1, true,
+        fake_apply_preset, fake_apply_crosshair) == -7);
+    assert(transaction.preset_calls == 1 && transaction.crosshair_calls == 0);
+    transaction = (transaction_fake_t) {.crosshair_result = -9};
+    assert(control_apply_preset_transaction(&transaction, 1, true,
+        fake_apply_preset, fake_apply_crosshair) == -9);
+    assert(transaction.preset_calls == 1 && transaction.crosshair_calls == 1);
+    assert(control_image_level_is_valid(0));
+    assert(control_image_level_is_valid(100));
+    assert(!control_image_level_is_valid(-10));
+    assert(!control_image_level_is_valid(55));
+    assert(!control_image_level_is_valid(110));
+
+    state_transaction_fake_t state_transaction = {.apply_result = -7};
+    control_transaction_result_t state_result = control_run_transaction(
+        &state_transaction, fake_apply, fake_persist, fake_rollback, 3);
+    assert(state_result.result == -7 && state_result.authoritative);
+    assert(state_transaction.persist_calls == 0 && state_transaction.rollback_calls == 1);
+    state_transaction = (state_transaction_fake_t) {.apply_result = -7, .rollback_result = -8};
+    state_result = control_run_transaction(
+        &state_transaction, fake_apply, fake_persist, fake_rollback, 3);
+    assert(!state_result.authoritative && state_result.rollback_result == -8);
+    state_transaction = (state_transaction_fake_t) {.persist_failures = 2};
+    state_result = control_run_transaction(
+        &state_transaction, fake_apply, fake_persist, fake_rollback, 3);
+    assert(state_result.result == 0 && state_result.authoritative);
+    assert(state_transaction.persist_calls == 3 && state_transaction.rollback_calls == 0);
+    state_transaction = (state_transaction_fake_t) {.persist_failures = 3};
+    state_result = control_run_transaction(
+        &state_transaction, fake_apply, fake_persist, fake_rollback, 3);
+    assert(state_result.result == -5 && state_result.authoritative);
+    assert(state_transaction.persist_calls == 3 && state_transaction.rollback_calls == 1);
+    state_transaction = (state_transaction_fake_t) {.persist_failures = 3, .rollback_result = -9};
+    state_result = control_run_transaction(
+        &state_transaction, fake_apply, fake_persist, fake_rollback, 3);
+    assert(!state_result.authoritative && state_result.rollback_result == -9);
+    state_transaction = (state_transaction_fake_t) {0};
+    state_result = control_run_transaction(
+        &state_transaction, fake_apply, fake_persist, fake_rollback, 3);
+    assert(state_result.result == 0 && state_result.authoritative);
+    transaction = (transaction_fake_t) {0};
+    assert(control_apply_preset_transaction(&transaction, 1, true,
+        fake_apply_preset, fake_apply_crosshair) == 0);
+    assert(transaction.preset_calls == 1 && transaction.crosshair_calls == 1);
+
+    char state_json[CONTROL_STATE_JSON_BUFFER_SIZE];
+    int state_length = snprintf(state_json, sizeof(state_json), CONTROL_STATE_JSON_FORMAT,
+        UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
+        INT_MIN, INT_MIN, INT_MIN, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
+        UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX,
+        UINT_MAX, UINT_MAX, UINT_MAX, "0.4.12",
+        UINT_MAX, INT_MIN, UINT_MAX, INT_MIN, UINT_MAX, INT_MIN);
+    assert(state_length > 0);
+    assert((size_t)state_length < sizeof(state_json));
+
+    char *main_source = read_text("main/main.c");
+    assert(strstr(main_source, "boot_analog_video_task") == NULL);
+    assert(strstr(main_source, "#define FIRMWARE_VERSION \"0.4.12\"") != NULL);
+    assert(strstr(main_source, "value < NTSC || value > PAL") != NULL);
+    assert(strstr(main_source, "stored.alignment.av_format = (enum AnalogVideoFormat)value") != NULL);
+    assert(strstr(main_source, "request_err = Mini2_set_analog_video_format") != NULL);
+    const char *uart_init = strstr(main_source, "Mini2_init(&cam)");
+    assert(uart_init != NULL);
+    const char *ready_delay = strstr(main_source, "vTaskDelay(pdMS_TO_TICKS(5000))");
+    assert(ready_delay != NULL);
+    assert(ready_delay < uart_init);
+    const char *cold_boot = strstr(uart_init, "Mini2_apply_preset");
+    assert(cold_boot != NULL);
+    assert(strstr(main_source, "switch_preset(preset)") != NULL);
+    assert(strstr(main_source, "#define BUTTON_LONG_PRESS_US (2 * 1000 * 1000)") != NULL);
+    assert(strstr(main_source, ".intr_type = GPIO_INTR_DISABLE") != NULL);
+    assert(strstr(main_source, "control_button_sample") != NULL);
+    assert(strstr(main_source, "switch_preset(value) != ESP_OK") != NULL);
+    assert(strstr(main_source, "set_preset_crosshair_enabled(stored.active_preset, enabled)") != NULL);
+    assert(strstr(main_source, "control_apply_preset_transaction") != NULL);
+    const char *preset_apply = strstr(main_source, "static esp_err_t apply_preset_with_crosshair");
+    assert(preset_apply != NULL);
+    const char *preset_transaction = strstr(preset_apply, "control_apply_preset_transaction");
+    const char *preset_position = strstr(preset_apply, "Mini2_set_crosshair_position");
+    assert(preset_transaction != NULL && preset_position != NULL &&
+           preset_transaction < preset_position);
+    const char *boot_apply = strstr(cold_boot, "Mini2_apply_preset");
+    assert(boot_apply != NULL);
+    const char *boot_apply_success = strstr(boot_apply, "if (boot_analog_video_initial_status == ESP_OK)");
+    const char *warmup_start = strstr(boot_apply_success, "Mini2 boot warm-up started");
+    const char *warmup_delay = strstr(warmup_start, "vTaskDelay(pdMS_TO_TICKS(2500))");
+    const char *warmup_complete = strstr(warmup_delay, "Mini2 boot warm-up completed");
+    const char *boot_crosshair = strstr(boot_apply, "Mini2_set_crosshair(&cam");
+    assert(boot_apply_success != NULL && warmup_start != NULL && warmup_delay != NULL &&
+           warmup_complete != NULL && boot_crosshair != NULL);
+    assert(boot_apply < boot_apply_success && boot_apply_success < warmup_start &&
+           warmup_start < warmup_delay && warmup_delay < warmup_complete &&
+           warmup_complete < boot_crosshair);
+    const char *boot_position = strstr(boot_crosshair, "Mini2_set_crosshair_position");
+    assert(boot_position != NULL && boot_apply < boot_crosshair && boot_crosshair < boot_position);
+    assert(strstr(main_source, "goto uart_failure") != NULL);
+    assert(strstr(main_source, "bool device_mutated = false") != NULL);
+    assert(strstr(main_source, "if (control_rollback_required(device_mutated))") != NULL);
+    const char *restore = strstr(main_source, "static esp_err_t restore_camera_snapshot");
+    assert(restore != NULL);
+    const char *restore_palette = strstr(restore, "Mini2_set_color_pallet");
+    const char *restore_scene = strstr(restore, "Mini2_set_scene_mode");
+    const char *restore_contrast = strstr(restore, "Mini2_set_contrast");
+    const char *restore_edge = strstr(restore, "Mini2_set_edge_enhancment");
+    const char *restore_detail = strstr(restore, "Mini2_set_detail_enhancement");
+    const char *restore_burn = strstr(restore, "Mini2_set_burn_protection");
+    const char *restore_shutter = strstr(restore, "Mini2_set_auto_shutter");
+    const char *restore_analog = strstr(restore, "Mini2_set_analog_video_format");
+    const char *restore_flip = strstr(restore, "Mini2_set_flip_mode");
+    const char *restore_zoom = strstr(restore, "Mini2_set_point_zoom");
+    const char *restore_crosshair = strstr(restore, "Mini2_set_crosshair");
+    const char *restore_crosshair_position = strstr(restore_crosshair, "Mini2_set_crosshair_position");
+    assert(restore_palette < restore_scene && restore_scene < restore_contrast &&
+           restore_contrast < restore_edge && restore_edge < restore_detail &&
+           restore_detail < restore_burn && restore_burn < restore_shutter &&
+           restore_shutter < restore_analog && restore_analog < restore_flip &&
+           restore_flip < restore_zoom && restore_zoom < restore_crosshair &&
+           restore_crosshair < restore_crosshair_position);
+    assert(strstr(restore_crosshair, "if (err == ESP_OK)") != NULL);
+    assert(strstr(main_source, "nvs_set_u8(flash_handle, \"crosshair_mask\", crosshair_preset_mask)") != NULL);
+    assert(strstr(main_source, "Mini2_set_crosshair(&cam, preset_crosshair_enabled(stored.active_preset))") != NULL);
+    assert(strstr(main_source, "nvs_set_blob(flash_handle, \"cursor_pos\"") != NULL);
+    assert(strstr(main_source, "nvs_set_u8(flash_handle, \"cursor_migrated\", 1)") != NULL);
+    assert(strstr(main_source, "stored.alignment.zoom = 10") != NULL);
+    assert(strstr(main_source, "json_obj_get_object(&jctx, \"crosshair_position\")") != NULL);
+    free(main_source);
+
+    char *html = read_text("main/index.html");
+    assert(strstr(html, "Hold the preset button for 2 seconds") != NULL);
+    assert(strstr(html, "aim_zoom") == NULL);
+    assert(strstr(html, "Aim crop zoom") == NULL);
+    assert(strstr(html, "crosshair_x_minus") != NULL && strstr(html, "crosshair_y_plus") != NULL);
+    assert(strstr(html, "zoom_x.max = sensor_width - 1") != NULL);
+    assert(strstr(html, "zoom_y.max = sensor_height - 1") != NULL);
+    assert(strstr(html, "crosshair_position") != NULL);
+    assert(strstr(html, "Camera state is not synchronized") != NULL);
+    assert(strstr(html, "cameraStateAuthoritative = data.camera_state_authoritative !== 0") != NULL);
+    assert(strstr(html, "persistenceAuthoritative = data.persistence_authoritative !== 0") != NULL);
+    assert(strstr(html, "Saved reboot state is not synchronized") != NULL);
+    free(html);
+
+    char *mini2 = read_text("components/Mini2/Mini2.c");
+    const char *apply = strstr(mini2, "esp_err_t Mini2_apply_preset");
+    assert(apply != NULL);
+    const char *digital = strstr(apply, "Mini2_set_digital_video_format(cam, true, UsbProgressive, Hz50)");
+    const char *analog = strstr(apply, "Mini2_set_analog_video_format(cam, alignment->av_format)");
+    const char *save = strstr(apply, "Mini2_save_video(cam)");
+    const char *scene = strstr(apply, "Mini2_set_scene_mode");
+    const char *settle = strstr(apply, "vTaskDelay(pdMS_TO_TICKS(500))");
+    const char *apply_condition = strstr(apply, "format_read_err != ESP_OK || format != alignment->av_format");
+    assert(apply_condition != NULL && digital != NULL && analog != NULL && save != NULL &&
+           settle != NULL && scene != NULL && apply_condition < digital && digital < analog &&
+           analog < save && save < settle && settle < scene);
+    assert(strstr(apply, "Boot video digital enable at %lld ms") != NULL);
+    assert(strstr(apply, "Boot video analog format at %lld ms") != NULL);
+    assert(strstr(apply, "Boot video save/apply at %lld ms") != NULL);
+    assert(strstr(apply, "vTaskDelay(pdMS_TO_TICKS(100))") == NULL);
+    assert(strstr(apply, "Mini2_NUC(cam)") == NULL);
+    assert(strstr(mini2, "memset(out_buf, 0, expected_len)") != NULL);
+    assert(strstr(mini2, "bytes_read <= 0 || (size_t)bytes_read != expected_len") != NULL);
+    assert(strstr(mini2, "uint8_t rx_buffer[11] = {0}") != NULL);
+    const char *position = strstr(mini2, "esp_err_t Mini2_set_crosshair_position");
+    assert(position != NULL);
+    assert(strstr(position, "(uint8_t)(x & 0xff), (uint8_t)(x >> 8)") != NULL);
+    assert(strstr(position, "(uint8_t)(y & 0xff), (uint8_t)(y >> 8)") != NULL);
+    free(mini2);
+    return 0;
+}
